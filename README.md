@@ -4,6 +4,7 @@ Jednoduchý meteorologický radar postavený na **ESP32-C3** a kulatém **240×2
 Zařízení pravidelně stahuje nejnovější radarový snímek z otevřených dat **Českého hydrometeorologického ústavu (ČHMÚ)** a zobrazuje okolí zadané polohy v několika úrovních přiblížení.
 
 Více na webu https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovym-datum/
+
 3D model: https://makerworld.com/cs/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083
 
 <p align="center">
