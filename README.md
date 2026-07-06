@@ -1,6 +1,6 @@
 # CHMI Radar pro ESP32-C3
 
-Jednoduchý meteorologický radar postavený na **ESP32-C3** a kulatém **240×240 LCD displeji (GC9A01)**. Nevyžaduje žádné další součístky.
+Jednoduchý meteorologický radar postavený na **ESP32-C3** a kulatém **240×240 LCD displeji (GC9A01)**. Nevyžaduje žádné další součástky.
 Zařízení pravidelně stahuje nejnovější radarový snímek z otevřených dat **Českého hydrometeorologického ústavu (ČHMÚ)** a zobrazuje okolí zadané polohy v několika úrovních přiblížení.
 
 Více na webu https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovym-datum/
