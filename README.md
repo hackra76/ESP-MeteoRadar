@@ -58,7 +58,7 @@ Více na webu https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovy
 | Jeden kontakt | GPIO9 |
 | Druhý kontakt | GND |
 
-V programu je použit interní **pull-up** rezistor. Toto tlačítko je integrováno přío na desce ESP32-C2 Super Mini jako tlačítko BOOT
+V programu je použit interní **pull-up** rezistor. Toto tlačítko je integrováno přímo na desce ESP32-C3 Super Mini jako tlačítko BOOT
 
 ---
 
