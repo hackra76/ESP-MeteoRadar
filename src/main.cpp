@@ -113,10 +113,10 @@ void showStatus(const String& text){
 bool renderRadar();
 
 String getRadarTimeText(const String& filename) {
-  // Nazev ma tvar napr. pacz2gmaps3.z_max3d.20260705.1310.0.png
-  // Cas v nazvu nechavame pro vyber nejnovejsiho souboru beze zmeny,
-  // offset se pouzije pouze pro zobrazeni na displeji.
-  const String prefix = "pacz2gmaps3.z_max3d.";
+  // Názov má tvar napr. cmax.kruh.20260811.1010.0.png
+  // Čas v názve nechávame pre výber najnovšieho súboru bez zmeny,
+  // offset sa použije iba pre zobrazenie na displeji.
+  const String prefix = "cmax.kruh.";
   int start = filename.indexOf(prefix);
   if (start < 0) return "--:--";
 
@@ -143,16 +143,16 @@ String getRadarTimeText(const String& filename) {
 void resetSettingsAndRestart() {
   Serial.println();
   Serial.println("================================");
-  Serial.println("Dlouhe podrzeni tlacitka - mazu WiFiManager a ulozenou konfiguraci");
+  Serial.println("Dlhe podrzanie tlacidla - mazem WiFiManager a ulozenu konfiguraciu");
   Serial.println("================================");
 
-  showStatus("Reset nastaveni...");
+  showStatus("Reset nastavenia...");
 
   WiFiManager wm;
-  wm.resetSettings();        // smaze ulozene WiFi udaje z NVS
+  wm.resetSettings();        // zmaze ulozene WiFi udaje z NVS
 
   prefs.begin("radar", false);
-  prefs.clear();             // smaze ulozenou polohu a vychozi zoom
+  prefs.clear();             // zmaze ulozenu polohu a predvoleny zoom
   prefs.end();
 
   delay(1000);
@@ -162,8 +162,8 @@ void resetSettingsAndRestart() {
 void checkResetButtonAtBoot() {
   if (digitalRead(ZOOM_BUTTON_PIN) != LOW) return;
 
-  Serial.println("Tlacitko drzeno pri startu - cekam na dlouhe podrzeni...");
-  showStatus("Drz pro reset");
+  Serial.println("Tlacidlo drzane pri starte - cakam na dlhe podrzanie...");
+  showStatus("Drz pre reset");
 
   uint32_t start = millis();
   while (digitalRead(ZOOM_BUTTON_PIN) == LOW) {
@@ -173,7 +173,7 @@ void checkResetButtonAtBoot() {
     delay(20);
   }
 
-  Serial.println("Tlacitko pusteno - reset se neprovede");
+  Serial.println("Tlacidlo pustene - reset sa nevykona");
 }
 
 void initZoomLevel() {
@@ -217,7 +217,7 @@ void handleZoomButton() {
       buttonPressStartMs = millis();
       longPressHandled = false;
     } else {
-      // Kratky stisk = prepnuti zoomu. Pokud uz probehl dlouhy stisk, zoom se neprepina.
+      // Krátke stlačenie = prepnutie zoomu. Ak už prebehol dlhý stisk, zoom sa neprepína.
       if (!longPressHandled) {
         nextZoomLevel();
         saveRadiusToPrefs(currentRadiusKm);
@@ -251,12 +251,15 @@ void loadPositionFromPrefs() {
   prefs.end();
 
   Serial.printf("Poloha: %.6f, %.6f\n", centerLat, centerLon);
-  Serial.printf("Vychozi zoom: %.0f km\n", currentRadiusKm);
-  Serial.printf("Casovy offset zobrazeni: %+d h\n", timeOffsetHours);
+  Serial.printf("Predvolený zoom: %.0f km\n", currentRadiusKm);
+  Serial.printf("Časový offset zobrazenia: %+d h\n", timeOffsetHours);
 }
 
 void connectWiFi() {
-  showStatus("ESP MeteoRadar v1.0\nPetanovo.cz\nWiFi portal...");
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
+  showStatus("ESP MeteoRadar v1.0\nSHMU Slovensko\nWiFi portal...");
   delay(500);
 
   char latBuf[16];
@@ -269,25 +272,30 @@ void connectWiFi() {
   snprintf(offsetBuf, sizeof(offsetBuf), "%d", timeOffsetHours);
 
   WiFiManager wm;
-  wm.setConfigPortalTimeout(180);
-  wm.setConnectTimeout(20);
+  wm.setConfigPortalTimeout(300);
+  wm.setConnectTimeout(15);
   wm.setBreakAfterConfig(true);
 
-  WiFiManagerParameter p_lat("lat", "Sirka / latitude", latBuf, sizeof(latBuf));
-  WiFiManagerParameter p_lon("lon", "Delka / longitude", lonBuf, sizeof(lonBuf));
-  WiFiManagerParameter p_radius("radius", "Vychozi rozsah km", radiusBuf, sizeof(radiusBuf));
-  WiFiManagerParameter p_offset("offset", "Casovy offset hodin (+2 leto, +1 zima)", offsetBuf, sizeof(offsetBuf));
+  // Ked sa vytvori WiFi AP, zobrazi sa to priamo na displeji
+  wm.setAPCallback([](WiFiManager *myWiFiManager) {
+    showStatus("WiFi Portal aktivny!\n\nPripojte sa na WiFi:\nESPMeteoRadar\n\nIP: 192.168.4.1");
+  });
+
+  WiFiManagerParameter p_lat("lat", "Zemepisná šírka / latitude", latBuf, sizeof(latBuf));
+  WiFiManagerParameter p_lon("lon", "Zemepisná dĺžka / longitude", lonBuf, sizeof(lonBuf));
+  WiFiManagerParameter p_radius("radius", "Predvolený rozsah km", radiusBuf, sizeof(radiusBuf));
+  WiFiManagerParameter p_offset("offset", "Časový offset hodín (+2 leto, +1 zima)", offsetBuf, sizeof(offsetBuf));
   wm.addParameter(&p_lat);
   wm.addParameter(&p_lon);
   wm.addParameter(&p_radius);
   wm.addParameter(&p_offset);
 
-  Serial.println("Spoustim WiFiManager...");
+  Serial.println("Spúšťam WiFiManager...");
   bool ok = wm.autoConnect("ESPMeteoRadar");
 
   if (!ok || WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFiManager: nepripojeno");
-    showStatus("WiFi chyba");
+    Serial.println("WiFiManager: nepripojené");
+    showStatus("WiFi chyba\nPodrz tlacidlo 3s\npre reset");
     return;
   }
 
@@ -296,8 +304,8 @@ void connectWiFi() {
   float newRadius = atof(p_radius.getValue());
   int newOffset = atoi(p_offset.getValue());
 
-  if (newLat > 47.0f && newLat < 52.5f) centerLat = newLat;
-  if (newLon > 11.0f && newLon < 20.5f) centerLon = newLon;
+  if (newLat > 46.5f && newLat < 50.5f) centerLat = newLat;
+  if (newLon > 14.0f && newLon < 23.5f) centerLon = newLon;
   if (newRadius == 10.0f || newRadius == 25.0f || newRadius == 50.0f || newRadius == 100.0f) {
     currentRadiusKm = newRadius;
   }
@@ -309,12 +317,12 @@ void connectWiFi() {
 
   Serial.print("WiFi OK, IP: ");
   Serial.println(WiFi.localIP());
-  Serial.printf("Nastavena poloha: %.6f, %.6f, zoom %.0f km, offset %+d h\n", centerLat, centerLon, currentRadiusKm, timeOffsetHours);
+  Serial.printf("Nastavená poloha: %.6f, %.6f, zoom %.0f km, offset %+d h\n", centerLat, centerLon, currentRadiusKm, timeOffsetHours);
 }
 
 String extractRadarTimestamp(const String& filename) {
-  // Nazev ma tvar: pacz2gmaps3.z_max3d.20260705.1725.0.png
-  const String prefix = "pacz2gmaps3.z_max3d.";
+  // Názov má tvar: cmax.kruh.20260811.1010.0.png
+  const String prefix = "cmax.kruh.";
   int start = filename.indexOf(prefix);
   if (start < 0) return "";
 
@@ -328,11 +336,11 @@ String extractRadarTimestamp(const String& filename) {
   for (int i = 0; i < date.length(); i++) if (!isDigit(date[i])) return "";
   for (int i = 0; i < hhmm.length(); i++) if (!isDigit(hhmm[i])) return "";
 
-  return date + hhmm; // napr. 202607051725 - dobre se porovnava jako text
+  return date + hhmm; // napr. 202608111010 - dobre sa porovnáva ako text
 }
 
 String findLatestPngNameInText(const String& text, String& newestTs, int& foundCount) {
-  const String prefix = "pacz2gmaps3.z_max3d.";
+  const String prefix = "cmax.kruh.";
   String latest;
   int pos = 0;
 
@@ -341,7 +349,7 @@ String findLatestPngNameInText(const String& text, String& newestTs, int& foundC
     if (idx < 0) break;
 
     int end = text.indexOf(".png", idx);
-    if (end < 0) break; // kandidat neni v tomto kusu textu kompletni
+    if (end < 0) break; // kandidát nie je v tomto kusu textu kompletný
 
     String name = text.substring(idx, end + 4);
     String ts = extractRadarTimestamp(name);
@@ -369,7 +377,7 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
   uint32_t lastDataMs = millis();
   uint8_t buf[512];
 
-  Serial.println("Prochazim index a hledam nejnovejsi timestamp v nazvu PNG...");
+  Serial.println("Prechádzam API stream a hľadám najnovší timestamp v názve PNG...");
 
   while (http.connected() && (contentLength < 0 || bytesRead < contentLength)) {
     size_t avail = stream->available();
@@ -386,26 +394,26 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
       String candidate = findLatestPngNameInText(window, newestTs, foundCount);
       if (!candidate.isEmpty()) latest = candidate;
 
-      // Nechame presah, kdyby byl na hranici chunku rozdeleny nazev souboru.
+      // Necháme presah, kedy by bol na hranici chunku rozdelený názov súboru.
       if (window.length() > 300) {
         window = window.substring(window.length() - 200);
       }
     } else {
       if (millis() - lastDataMs > 10000) {
-        Serial.println("Timeout pri cteni indexu");
+        Serial.println("Timeout pri čítaní API");
         break;
       }
       delay(1);
     }
   }
 
-  // Doprohledani zbytku okna.
+  // Doprohľadávanie zvyšku okna.
   String candidate = findLatestPngNameInText(window, newestTs, foundCount);
   if (!candidate.isEmpty()) latest = candidate;
 
-  Serial.printf("Index precten: %d B, nalezeno kandidatu: %d\n", bytesRead, foundCount);
+  Serial.printf("API prečítané: %d B, nájdených kandidátov: %d\n", bytesRead, foundCount);
   if (!latest.isEmpty()) {
-    Serial.print("Vybrany timestamp: ");
+    Serial.print("Vybraný timestamp: ");
     Serial.println(newestTs);
   }
   return latest;
@@ -419,12 +427,12 @@ bool downloadLatestRadar() {
 
   HTTPClient http;
   http.setTimeout(15000);
-  Serial.println("Stahuji index CHMU...");
+  Serial.println("Sťahujem radardata API SHMÚ...");
 
-  if (!http.begin(client, CHMU_INDEX_URL)) return false;
+  if (!http.begin(client, SHMU_API_URL)) return false;
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Index HTTP chyba: %d\n", code);
+    Serial.printf("API HTTP chyba: %d\n", code);
     http.end();
     return false;
   }
@@ -433,25 +441,25 @@ bool downloadLatestRadar() {
   http.end();
 
   if (latest.isEmpty()) {
-    Serial.println("Nenalezen zadny PNG soubor");
+    Serial.println("Nenádený žiaden PNG súbor v SHMÚ API");
     return false;
   }
 
   Serial.println();
   Serial.println("================================");
-  Serial.print("Vybrany nejnovejsi PNG: ");
+  Serial.print("Vybraný najnovší PNG: ");
   Serial.println(latest);
-  Serial.print("Cas snimku: ");
+  Serial.print("Čas snímky: ");
   Serial.println(getRadarTimeText(latest));
   Serial.println("================================");
 
   if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) {
-    Serial.println("Soubor uz je aktualni");
+    Serial.println("Súbor už je aktuálny");
     return true;
   }
 
-  String url = String(CHMU_BASE_URL) + latest;
-  Serial.print("Stahuji: ");
+  String url = String(SHMU_BASE_URL) + latest;
+  Serial.print("Sťahujem: ");
   Serial.println(url);
 
   if (!http.begin(client, url)) return false;
@@ -464,7 +472,7 @@ bool downloadLatestRadar() {
 
   File f = SPIFFS.open(RADAR_FILE, "w");
   if (!f) {
-    Serial.println("Nelze otevrit soubor pro zapis");
+    Serial.println("Nemožno otvoriť súbor pre zápis");
     http.end();
     return false;
   }
@@ -490,10 +498,10 @@ bool downloadLatestRadar() {
   http.end();
   lastPngName = latest;
 
-  Serial.print("Stazeny soubor: ");
+  Serial.print("Stiahnutý súbor: ");
   Serial.println(latest);
-  Serial.printf("Ulozeno %d B\n", written);
-  Serial.print("Zobrazovany cas snimku: ");
+  Serial.printf("Uložené %d B\n", written);
+  Serial.print("Zobrazovaný čas snímky: ");
   Serial.println(getRadarTimeText(latest));
   return written > 0;
 }
@@ -599,8 +607,9 @@ void setup() {
   showStatus("ESP MeteoRadar");
 
   if (!SPIFFS.begin(true)) {
-    showStatus("SPIFFS chyba");
-    return;
+    showStatus("Chyba SPIFFS!");
+    delay(3000);
+    // Pokracujeme aj bez SPIFFS, portal bude fungovat
   }
 
   connectWiFi();
@@ -609,7 +618,7 @@ void setup() {
   if (downloadLatestRadar()) {
     renderRadar();
   } else {
-    showStatus("Stazeni selhalo");
+    showStatus("Stiahnutie zlyhalo");
   }
 
   lastUpdate = millis();

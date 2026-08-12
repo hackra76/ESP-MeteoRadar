@@ -1,9 +1,9 @@
-# CHMI Radar pro ESP32-C3
+# SHMÚ Radar pre ESP32-C3 (Slovensko)
 
-Jednoduchý meteorologický radar postavený na **ESP32-C3** a kulatém **240×240 LCD displeji (GC9A01)**. Nevyžaduje žádné další součástky.
-Zařízení pravidelně stahuje nejnovější radarový snímek z otevřených dat **Českého hydrometeorologického ústavu (ČHMÚ)** a zobrazuje okolí zadané polohy v několika úrovních přiblížení.
+Jednoduchý meteorologický radar postavený na **ESP32-C3** a okrúhlom **240×240 LCD displeji (GC9A01)**. Nevyžaduje žiadne ďalšie súčiastky.
+Zariadenie pravidelne sťahuje najnovší radarový snímok z otvorených dát **Slovenského hydrometeorologického ústavu (SHMÚ)** a zobrazuje okolie zadanej polohy v niekoľkých úrovniach priblíženia.
 
-Více na webu https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovym-datum/
+Pôvodný projekt (pre Česko): https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovym-datum/
 
 3D model: https://makerworld.com/cs/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083
 
@@ -13,33 +13,33 @@ Více na webu https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovy
 
 ---
 
-## Funkce
+## Funkcie
 
-- 🌧️ Stahování nejnovějších radarových snímků ČHMÚ
-- 📡 Automatická aktualizace každých 2,5 minuty
-- 📍 Nastavení vlastní polohy (zeměpisná šířka a délka)
-- 🔍 Přepínání zoomu:
+- 🌧️ Sťahovanie najnovších radarových snímok SHMÚ (CMAX kompozit)
+- 📡 Automatická aktualizácia každých 2,5 minúty
+- 📍 Nastavenie vlastnej polohy (zemepisná šírka a dĺžka na Slovensku)
+- 🔍 Prepínanie zoomu:
   - 10 km
   - 25 km
   - 50 km
   - 100 km
-- 📶 Konfigurace WiFi pomocí **WiFiManageru**
-- 💾 Uložení nastavení do interní paměti ESP32 (Preferences)
-- 🕒 Nastavitelný časový posun zobrazeného času radarového snímku
-- 🔘 Ovládání jedním tlačítkem
-- 🖥️ Podpora kulatého displeje GC9A01 (240×240)
+- 📶 Konfigurácia WiFi pomocou **WiFiManageru**
+- 💾 Uloženie nastavení do internej pamäte ESP32 (Preferences)
+- 🕒 Nastaviteľný časový posun zobrazeného času radarového snímku (+1 hodina v zime, +2 hodiny v lete)
+- 🔘 Ovládanie jedným tlačidlom
+- 🖥️ Podpora okrúhleho displeja GC9A01 (240×240)
 
 ---
 
 # Použitý hardware
 
 - ESP32-C3
-- Kulatý TFT displej GC9A01 (240×240)
-- Jedno tlačítko (součástí ESP32-C3 Super Mini)
+- Okrúhly TFT displej GC9A01 (240×240)
+- Jedno tlačidlo (súčasťou ESP32-C3 Super Mini)
 
 ---
 
-# Zapojení
+# Zapojenie
 
 ## Displej
 
@@ -51,63 +51,64 @@ Více na webu https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovy
 | DC | GPIO10 |
 | RESET | GPIO0 |
 
-## Tlačítko
+## Tlačidlo
 
-| Tlačítko | ESP32-C3 |
+| Tlačidlo | ESP32-C3 |
 |-----------|-----------|
 | Jeden kontakt | GPIO9 |
 | Druhý kontakt | GND |
 
-V programu je použit interní **pull-up** rezistor. Toto tlačítko je integrováno přímo na desce ESP32-C3 Super Mini jako tlačítko BOOT
+V programe je použitý interný **pull-up** rezistor. Toto tlačidlo je integrované priamo na doske ESP32-C3 Super Mini ako tlačidlo BOOT.
 
 ---
 
-# Ovládání
+# Ovládanie
 
-## Krátký stisk tlačítka
+## Krátke stlačenie tlačidla
 
-Přepíná rozsah radaru:
+Prepína rozsah radaru:
 
 ```
 10 km → 25 km → 50 km → 100 km
 ```
 
-## Dlouhý stisk (cca 3 sekundy)
+## Dlhé stlačenie (cca 3 sekundy)
 
-Vymaže uložené nastavení a znovu spustí WiFiManager.
+Vymaže uložené nastavenia a znova spustí WiFiManager.
 
 ---
 
-# Konfigurace
+# Konfigurácia
 
-Při prvním spuštění (nebo po dlouhém podržení tlačítka) se vytvoří WiFi síť:
+Pri prvom spustení (alebo po dlhom podržaní tlačidla) sa vytvorí WiFi sieť:
 
 ```
 ESP-MeteoRadar
 ```
 
-Po připojení lze nastavit:
+Po pripojení je možné nastaviť:
 
-- WiFi síť
+- WiFi sieť
 - heslo
-- zeměpisnou šířku
-- zeměpisnou délku
-- výchozí zoom
-- časový posun zobrazeného času (+1 hodina v zimě, +2 hodiny v létě)
+- zemepisnú šírku (napr. 48.1486 pre Bratislavu, 48.6690 pre Banskú Bystricu)
+- zemepisnú dĺžku (napr. 17.1077 pre Bratislavu, 19.6990 pre Banskú Bystricu)
+- predvolený zoom
+- časový posun zobrazeného času (+1 hodina v zime, +2 hodiny v lete)
 
-Veškeré nastavení je uloženo do interní paměti ESP32.
-
----
-
-# Zdroj radarových dat
-
-Projekt využívá otevřená data Českého hydrometeorologického ústavu (ČHMÚ):
-
-https://opendata.chmi.cz/
+Všetky nastavenia sú uložené v internej pamäti ESP32.
 
 ---
 
-# Použité knihovny
+# Zdroj radarových dát
+
+Projekt využíva otvorené dáta Slovenského hydrometeorologického ústavu (SHMÚ):
+
+https://www.shmu.sk/sk/?page=1&id=meteo_radar
+https://opendata.shmu.sk/
+
+---
+
+# Použité knižnice
 
 - LovyanGFX
 - PNGdec
@@ -116,17 +117,17 @@ https://opendata.chmi.cz/
 
 ---
 
-# Možná budoucí rozšíření
+# Možné budúce rozšírenia
 
-- mapa České republiky jako podklad
-- zobrazení světových stran
-- názvy větších měst
-- legenda intenzity srážek
-- OTA aktualizace firmware
-- animace posledních radarových snímků
+- mapa Slovenskej republiky ako podklad
+- zobrazenie svetových strán
+- názvy väčších miest
+- legenda intenzity zrážok
+- OTA aktualizácia firmware
+- animácia posledných radarových snímok
 
 ---
 
-# Licence
+# Licencia
 
-Projekt je uvolněn pod licencí **MIT**.
+Projekt je uvoľnený pod licenciou **MIT**.
