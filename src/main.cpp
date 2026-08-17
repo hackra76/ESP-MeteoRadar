@@ -30,8 +30,6 @@ static const char* RADAR_FILE = "/radar.png";
 
 /**
  * @brief Slovakia Border Vector Array (Longitude, Latitude)
- * MODIFY HERE: You can add, remove, or adjust coordinate points 
- * to refine the border shape or adapt this for another country.
  */
 static const float SK_BORDER[][2] = {
   {16.96, 48.48}, {16.85, 48.28}, {17.06, 48.14}, {17.16, 48.02}, {17.65, 47.78},
@@ -46,7 +44,6 @@ static constexpr size_t SK_BORDER_COUNT = sizeof(SK_BORDER) / sizeof(SK_BORDER[0
 
 /**
  * @brief Major Cities Database (Name, Latitude, Longitude)
- * MODIFY HERE: Add or remove cities/towns to display on the map overlay.
  */
 struct City {
   const char* name;
@@ -85,12 +82,12 @@ String lastPngName;
 uint32_t lastUpdate = 0;
 Preferences prefs;
 
-// Default runtime configuration states (overwritten by Preferences or WiFiManager)
+// Default runtime configuration states
 float centerLat = atof(DEFAULT_CENTER_LAT);
 float centerLon = atof(DEFAULT_CENTER_LON);
 int timeOffsetHours = DEFAULT_TIME_OFFSET_HOURS;
 
-// Available zoom steps in kilometers radius from center (including 250km for whole Slovakia)
+// Available zoom steps in kilometers radius from center (10, 25, 50, 100, 250 km)
 static const float ZOOM_LEVELS_KM[] = {10.0f, 25.0f, 50.0f, 100.0f, 250.0f};
 static constexpr int ZOOM_LEVEL_COUNT = sizeof(ZOOM_LEVELS_KM) / sizeof(ZOOM_LEVELS_KM[0]);
 int zoomIndex = 1;
@@ -112,37 +109,22 @@ bool renderRadar();
 // 2. GEOGRAPHIC & PROJECTION MAPPING HELPERS
 // ==========================================
 
-/**
- * @brief Converts geographic Longitude to image pixel X coordinate.
- */
 int lonToX(float lon) {
   return roundf((lon - LON_LEFT) * (RADAR_IMG_W - 1) / (LON_RIGHT - LON_LEFT));
 }
 
-/**
- * @brief Converts geographic Latitude to image pixel Y coordinate.
- */
 int latToY(float lat) {
   return roundf((LAT_TOP - lat) * (RADAR_IMG_H - 1) / (LAT_TOP - LAT_BOTTOM));
 }
 
-/**
- * @brief Maps global map pixels to circular screen coordinates (X axis).
- */
 float mapXToScreenX(float mapX) {
   return (mapX - crop.x1) * (float)TFT_W / (float)crop.w();
 }
 
-/**
- * @brief Maps global map pixels to circular screen coordinates (Y axis).
- */
 float mapYToScreenY(float mapY) {
   return (mapY - crop.y1) * (float)TFT_H / (float)crop.h();
 }
 
-/**
- * @brief Computes the dynamic pixel crop window based on center GPS and radius.
- */
 CropBox makeCrop(float lat, float lon, float radiusKm) {
   float degLat = radiusKm / 111.32f;
   float degLon = radiusKm / (111.32f * cosf(lat * DEG_TO_RAD));
@@ -167,9 +149,6 @@ CropBox makeCrop(float lat, float lon, float radiusKm) {
 // 3. UI & STATUS DISPLAY FUNCTIONS
 // ==========================================
 
-/**
- * @brief Renders multiline status messages centered on the screen.
- */
 void showStatus(const String& text) {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -190,9 +169,6 @@ void showStatus(const String& text) {
   }
 }
 
-/**
- * @brief Extracts and formats timestamp HH:MM from radar filename string.
- */
 String getRadarTimeText(const String& filename) {
   const String prefix = "cmax.kruh.";
   int start = filename.indexOf(prefix);
@@ -222,9 +198,6 @@ String getRadarTimeText(const String& filename) {
 // 4. SYSTEM RESET & PREFERENCES STORAGE
 // ==========================================
 
-/**
- * @brief Clears WiFi Manager settings and NVS preferences, then restarts.
- */
 void resetSettingsAndRestart() {
   Serial.println("\n================================");
   Serial.println("Resetting WiFiManager and preferences...");
@@ -243,9 +216,6 @@ void resetSettingsAndRestart() {
   ESP.restart();
 }
 
-/**
- * @brief Checks if the physical button is held down at boot to trigger factory reset.
- */
 void checkResetButtonAtBoot() {
   if (digitalRead(ZOOM_BUTTON_PIN) != LOW) return;
 
@@ -309,9 +279,6 @@ void loadPositionFromPrefs() {
   Serial.printf("Time Offset: %+d h\n", timeOffsetHours);
 }
 
-/**
- * @brief Handles short press (zoom toggle) and long press (factory reset).
- */
 void handleZoomButton() {
   bool reading = digitalRead(ZOOM_BUTTON_PIN);
 
@@ -347,9 +314,6 @@ void handleZoomButton() {
 // 5. WIFI & CONFIGURATION PORTAL
 // ==========================================
 
-/**
- * @brief Connects to WiFi or launches AP Portal with configuration input fields.
- */
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
   delay(100);
@@ -495,66 +459,95 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
 }
 
 /**
- * @brief Securely downloads the latest radar image frame from the SHMÚ directory.
+ * @brief Securely downloads the latest radar image frame with robust retry and DNS recovery logic.
  */
 bool downloadLatestRadar() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setHandshakeTimeout(10000);
-
-  HTTPClient http;
-  http.setTimeout(15000);
-
-  if (!http.begin(client, SHMU_API_URL)) return false;
-  int code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    http.end();
-    return false;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected. Reconnecting...");
+    WiFi.reconnect();
+    delay(3000);
+    if (WiFi.status() != WL_CONNECTED) return false;
   }
 
-  String latest = findLatestPngNameFromHttpStream(http);
-  http.end();
+  // Try up to 2 times with robust network and DNS recovery
+  for (int attempt = 1; attempt <= 2; attempt++) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setHandshakeTimeout(15000);
 
-  if (latest.isEmpty()) return false;
-  if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) return true;
+    HTTPClient http;
+    http.setTimeout(15000);
 
-  String url = String(SHMU_BASE_URL) + latest;
-  if (!http.begin(client, url)) return false;
-  code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    http.end();
-    return false;
-  }
+    Serial.printf("Connecting to SHMÚ API (Attempt %d/2)...\n", attempt);
 
-  File f = SPIFFS.open(RADAR_FILE, "w");
-  if (!f) {
-    http.end();
-    return false;
-  }
+    if (http.begin(client, SHMU_API_URL)) {
+      int code = http.GET();
+      if (code == HTTP_CODE_OK) {
+        String latest = findLatestPngNameFromHttpStream(http);
+        http.end();
+        client.stop();
 
-  WiFiClient* stream = http.getStreamPtr();
-  uint8_t buf[1024];
-  int total = http.getSize();
-  int written = 0;
+        if (!latest.isEmpty()) {
+          if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) {
+            return true; // Already latest version
+          }
 
-  while (http.connected() && (total < 0 || written < total)) {
-    size_t avail = stream->available();
-    if (avail) {
-      size_t toRead = (avail < sizeof(buf)) ? avail : sizeof(buf);
-      int n = stream->readBytes(buf, toRead);
-      f.write(buf, n);
-      written += n;
+          // Download the actual PNG file
+          String url = String(SHMU_BASE_URL) + latest;
+          HTTPClient httpImg;
+          httpImg.setTimeout(25000);
+
+          if (httpImg.begin(client, url)) {
+            int imgCode = httpImg.GET();
+            if (imgCode == HTTP_CODE_OK) {
+              File f = SPIFFS.open(RADAR_FILE, "w");
+              if (f) {
+                WiFiClient* stream = httpImg.getStreamPtr();
+                uint8_t buf[1024];
+                int total = httpImg.getSize();
+                int written = 0;
+
+                while (httpImg.connected() && (total < 0 || written < total)) {
+                  size_t avail = stream->available();
+                  if (avail) {
+                    size_t toRead = (avail < sizeof(buf)) ? avail : sizeof(buf);
+                    int n = stream->readBytes(buf, toRead);
+                    f.write(buf, n);
+                    written += n;
+                  } else {
+                    delay(1);
+                  }
+                }
+                f.close();
+                httpImg.end();
+                client.stop();
+                lastPngName = latest;
+                return written > 0;
+              }
+            }
+            httpImg.end();
+          }
+        }
+      } else {
+        Serial.printf("HTTP API error code: %d\n", code);
+        http.end();
+      }
     } else {
-      delay(1);
+      Serial.println("HTTP begin failed.");
+    }
+    client.stop();
+
+    if (attempt < 2) {
+      Serial.println("Network/DNS glitch detected. Re-checking Wi-Fi and retrying in 4 seconds...");
+      if (WiFi.status() != WL_CONNECTED) {
+        WiFi.reconnect();
+      }
+      delay(4000);
     }
   }
 
-  f.close();
-  http.end();
-  lastPngName = latest;
-  return written > 0;
+  Serial.println("Radar download failed after retry.");
+  return false;
 }
 
 
@@ -581,11 +574,6 @@ int32_t pngSeek(PNGFILE* handle, int32_t position) {
   return pngFile.seek(position) ? position : -1;
 }
 
-/**
- * @brief Memory-optimized Line-by-Line Decoder & Resampler.
- * Stretches source rows to fill target vertical spans without gaps, 
- * using zero large heap allocations.
- */
 int drawPngLine(PNGDRAW* pDraw) {
   int srcY = pDraw->y;
   if (srcY < crop.y1 || srcY > crop.y2) return 1;
@@ -616,9 +604,6 @@ int drawPngLine(PNGDRAW* pDraw) {
 // 8. GRAPHIC OVERLAYS & RENDERING
 // ==========================================
 
-/**
- * @brief Draws vector national border lines scaled to the current crop window.
- */
 void drawSlovakiaBorder() {
   for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
     float mapX1 = (float)lonToX(SK_BORDER[i][0]);
@@ -635,9 +620,6 @@ void drawSlovakiaBorder() {
   }
 }
 
-/**
- * @brief Renders city name labels and red crosshair markers within viewport bounds.
- */
 void drawCitiesOverlay() {
   tft.setTextDatum(middle_center);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -657,9 +639,6 @@ void drawCitiesOverlay() {
   }
 }
 
-/**
- * @brief Renders HUD rings, center crosshairs, timestamp, and zoom indicator.
- */
 void drawOverlay() {
   int cx = TFT_W / 2;
   int cy = TFT_H / 2;
@@ -680,9 +659,6 @@ void drawOverlay() {
   tft.drawString(getRadarTimeText(lastPngName), cx, TFT_H - 4);
 }
 
-/**
- * @brief Decodes and renders the radar map frame directly onto the display.
- */
 bool renderRadar() {
   if (!SPIFFS.exists(RADAR_FILE)) return false;
 
@@ -746,7 +722,7 @@ void setup() {
 }
 
 void loop() {
-  // Periodic background check for new radar imagery based on interval defined in config.h
+  // Periodic background check for new radar imagery every 5 minutes
   if (millis() - lastUpdate >= UPDATE_INTERVAL_MS) {
     lastUpdate = millis();
     if (WiFi.status() != WL_CONNECTED) {

@@ -10,7 +10,7 @@ python3 -m esptool --chip esp32c3 merge_bin -o esp-meteoradar.bin --flash_mode d
 #define DEFAULT_CENTER_LAT "48.6690"
 #define DEFAULT_CENTER_LON "19.6990"
 
-// Predvolený okruh zobrazenia po štarte. Tlačidlom sa prepína 10 / 25 / 50 / 100 km.
+// Predvolený okruh zobrazenia po štarte. Tlačidlom sa prepína 10 / 25 / 50 / 100 / 250 km.
 #define DEFAULT_RADIUS_KM_TEXT "50"
 
 // Offset času radarového snímku iba pre zobrazenie na displeji.
@@ -22,8 +22,8 @@ python3 -m esptool --chip esp32c3 merge_bin -o esp-meteoradar.bin --flash_mode d
 #define ZOOM_BUTTON_PIN 9
 static constexpr uint32_t RESET_HOLD_MS = 3000;
 
-// Aktualizácia radaru
-static constexpr uint32_t UPDATE_INTERVAL_MS = 5UL * 30UL * 1000UL; //2,5 min
+// Aktualizácia radaru (zmenené na 5 minút)
+static constexpr uint32_t UPDATE_INTERVAL_MS = 5UL * 60UL * 1000UL; // 5 min
 
 // ===== SHMÚ OpenData =====
 static constexpr const char* SHMU_API_URL  = "https://www.shmu.sk/api/v1/meteo/getradardata";
