@@ -1,3 +1,11 @@
+/**
+ * @file main.cpp
+ * @brief ESP32-C3 MeteoRadar Display for SHMÚ (Slovakia)
+ * @details Fetches live meteorological radar images, crops/resamples them 
+ *          dynamically around a custom GPS coordinate, and overlays national 
+ *          borders, city markers, and distance rings on a round GC9A01 display.
+ */
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -11,12 +19,58 @@
 #include "config.h"
 #include "display_gc9a01.h"
 
+// ==========================================
+// 1. GLOBAL OBJECTS & CONFIGURATION DATA
+// ==========================================
 LGFX tft;
 PNG png;
 File pngFile;
 
 static const char* RADAR_FILE = "/radar.png";
 
+/**
+ * @brief Slovakia Border Vector Array (Longitude, Latitude)
+ * MODIFY HERE: You can add, remove, or adjust coordinate points 
+ * to refine the border shape or adapt this for another country.
+ */
+static const float SK_BORDER[][2] = {
+  {16.96, 48.48}, {16.85, 48.28}, {17.06, 48.14}, {17.16, 48.02}, {17.65, 47.78},
+  {18.10, 47.76}, {18.30, 47.78}, {18.75, 47.79}, {18.82, 48.08}, {19.00, 48.16},
+  {19.82, 48.08}, {20.07, 48.27}, {20.45, 48.50}, {20.61, 48.55}, {21.05, 48.52},
+  {21.68, 48.37}, {22.15, 48.44}, {22.14, 48.16}, {22.56, 49.08}, {22.38, 49.12},
+  {21.31, 49.42}, {20.85, 49.40}, {20.65, 49.41}, {20.10, 49.33}, {19.58, 49.44},
+  {19.22, 49.52}, {18.84, 49.51}, {18.45, 49.45}, {18.06, 49.18}, {17.85, 48.95},
+  {17.62, 48.87}, {17.32, 48.85}, {17.07, 48.77}, {16.96, 48.48}
+};
+static constexpr size_t SK_BORDER_COUNT = sizeof(SK_BORDER) / sizeof(SK_BORDER[0]);
+
+/**
+ * @brief Major Cities Database (Name, Latitude, Longitude)
+ * MODIFY HERE: Add or remove cities/towns to display on the map overlay.
+ */
+struct City {
+  const char* name;
+  float lat;
+  float lon;
+};
+
+static const City CITIES[] = {
+  {"BA", 48.1486, 17.1077}, // Bratislava
+  {"TT", 48.3775, 17.5883}, // Trnava
+  {"NR", 48.3061, 18.0864}, // Nitra
+  {"TN", 48.8945, 18.0444}, // Trenčín
+  {"ZA", 49.2231, 18.7397}, // Žilina
+  {"BB", 48.7363, 19.1462}, // Banská Bystrica
+  {"PO", 48.9984, 21.2393}, // Prešov
+  {"KE", 48.7164, 21.2611}, // Košice
+  {"BJ", 49.2918, 21.2727}, // Bardejov
+  {"PP", 49.0595, 20.2978}, // Poprad
+  {"MI", 48.7547, 21.9195}, // Michalovce
+  {"LC", 48.3294, 19.6648}  // Lučenec
+};
+static constexpr size_t CITY_COUNT = sizeof(CITIES) / sizeof(CITIES[0]);
+
+// Bounding box structure for map coordinate cropping
 struct CropBox {
   int x1, y1, x2, y2;
   int w() const { return x2 - x1 + 1; }
@@ -26,19 +80,23 @@ struct CropBox {
 CropBox crop;
 uint16_t line565[RADAR_IMG_W];
 uint16_t outLine[TFT_W];
+
 String lastPngName;
 uint32_t lastUpdate = 0;
 Preferences prefs;
 
+// Default runtime configuration states (overwritten by Preferences or WiFiManager)
 float centerLat = atof(DEFAULT_CENTER_LAT);
 float centerLon = atof(DEFAULT_CENTER_LON);
 int timeOffsetHours = DEFAULT_TIME_OFFSET_HOURS;
 
+// Available zoom steps in kilometers radius from center
 static const float ZOOM_LEVELS_KM[] = {10.0f, 25.0f, 50.0f, 100.0f};
 static constexpr int ZOOM_LEVEL_COUNT = sizeof(ZOOM_LEVELS_KM) / sizeof(ZOOM_LEVELS_KM[0]);
 int zoomIndex = 1;
 float currentRadiusKm = atof(DEFAULT_RADIUS_KM_TEXT);
 
+// Button debounce and long-press state tracking variables
 bool lastButtonReading = HIGH;
 bool stableButtonState = HIGH;
 uint32_t lastButtonChangeMs = 0;
@@ -46,14 +104,45 @@ uint32_t buttonPressStartMs = 0;
 bool longPressHandled = false;
 static constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
 
+// Forward Declarations
+bool renderRadar();
+
+
+// ==========================================
+// 2. GEOGRAPHIC & PROJECTION MAPPING HELPERS
+// ==========================================
+
+/**
+ * @brief Converts geographic Longitude to image pixel X coordinate.
+ */
 int lonToX(float lon) {
   return roundf((lon - LON_LEFT) * (RADAR_IMG_W - 1) / (LON_RIGHT - LON_LEFT));
 }
 
+/**
+ * @brief Converts geographic Latitude to image pixel Y coordinate.
+ */
 int latToY(float lat) {
   return roundf((LAT_TOP - lat) * (RADAR_IMG_H - 1) / (LAT_TOP - LAT_BOTTOM));
 }
 
+/**
+ * @brief Maps global map pixels to circular screen coordinates (X axis).
+ */
+float mapXToScreenX(float mapX) {
+  return (mapX - crop.x1) * (float)TFT_W / (float)crop.w();
+}
+
+/**
+ * @brief Maps global map pixels to circular screen coordinates (Y axis).
+ */
+float mapYToScreenY(float mapY) {
+  return (mapY - crop.y1) * (float)TFT_H / (float)crop.h();
+}
+
+/**
+ * @brief Computes the dynamic pixel crop window based on center GPS and radius.
+ */
 CropBox makeCrop(float lat, float lon, float radiusKm) {
   float degLat = radiusKm / 111.32f;
   float degLon = radiusKm / (111.32f * cosf(lat * DEG_TO_RAD));
@@ -73,35 +162,37 @@ CropBox makeCrop(float lat, float lon, float radiusKm) {
   return {x1, y1, x2, y2};
 }
 
-void showStatus(const String& text){
+
+// ==========================================
+// 3. UI & STATUS DISPLAY FUNCTIONS
+// ==========================================
+
+/**
+ * @brief Renders multiline status messages centered on the screen.
+ */
+void showStatus(const String& text) {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
   int y = 80;
   int start = 0;
 
-  while (true){
+  while (true) {
     int pos = text.indexOf('\n', start);
-
-    String line;
-    if (pos == -1)
-      line = text.substring(start);
-    else
-      line = text.substring(start, pos);
+    String line = (pos == -1) ? text.substring(start) : text.substring(start, pos);
 
     tft.setTextDatum(middle_center);
     tft.drawString(line, TFT_W / 2, y);
     y += 20;
 
-    if (pos == -1)
-      break;
-
+    if (pos == -1) break;
     start = pos + 1;
   }
 }
 
-bool renderRadar();
-
+/**
+ * @brief Extracts and formats timestamp HH:MM from radar filename string.
+ */
 String getRadarTimeText(const String& filename) {
   const String prefix = "cmax.kruh.";
   int start = filename.indexOf(prefix);
@@ -126,10 +217,17 @@ String getRadarTimeText(const String& filename) {
   return String(out);
 }
 
+
+// ==========================================
+// 4. SYSTEM RESET & PREFERENCES STORAGE
+// ==========================================
+
+/**
+ * @brief Clears WiFi Manager settings and NVS preferences, then restarts.
+ */
 void resetSettingsAndRestart() {
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("Dlhe podrzanie tlacidla - mazem WiFiManager a ulozenu konfiguraciu");
+  Serial.println("\n================================");
+  Serial.println("Resetting WiFiManager and preferences...");
   Serial.println("================================");
 
   showStatus("Reset nastavenia...");
@@ -145,10 +243,13 @@ void resetSettingsAndRestart() {
   ESP.restart();
 }
 
+/**
+ * @brief Checks if the physical button is held down at boot to trigger factory reset.
+ */
 void checkResetButtonAtBoot() {
   if (digitalRead(ZOOM_BUTTON_PIN) != LOW) return;
 
-  Serial.println("Tlacidlo drzane pri starte - cakam na dlhe podrzanie...");
+  Serial.println("Button held at boot - waiting for factory reset timeout...");
   showStatus("Drz pre reset");
 
   uint32_t start = millis();
@@ -158,8 +259,6 @@ void checkResetButtonAtBoot() {
     }
     delay(20);
   }
-
-  Serial.println("Tlacidlo pustene - reset sa nevykona");
 }
 
 void initZoomLevel() {
@@ -188,6 +287,31 @@ void saveRadiusToPrefs(float radiusKm) {
   prefs.end();
 }
 
+void saveConfigToPrefs(float lat, float lon, float radiusKm, int offsetHours) {
+  prefs.begin("radar", false);
+  prefs.putFloat("lat", lat);
+  prefs.putFloat("lon", lon);
+  prefs.putFloat("radius", radiusKm);
+  prefs.putInt("tzOffset", offsetHours);
+  prefs.end();
+}
+
+void loadPositionFromPrefs() {
+  prefs.begin("radar", true);
+  centerLat = prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT));
+  centerLon = prefs.getFloat("lon", atof(DEFAULT_CENTER_LON));
+  currentRadiusKm = prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT));
+  timeOffsetHours = prefs.getInt("tzOffset", DEFAULT_TIME_OFFSET_HOURS);
+  prefs.end();
+
+  Serial.printf("Position: %.6f, %.6f\n", centerLat, centerLon);
+  Serial.printf("Zoom: %.0f km\n", currentRadiusKm);
+  Serial.printf("Time Offset: %+d h\n", timeOffsetHours);
+}
+
+/**
+ * @brief Handles short press (zoom toggle) and long press (factory reset).
+ */
 void handleZoomButton() {
   bool reading = digitalRead(ZOOM_BUTTON_PIN);
 
@@ -218,28 +342,14 @@ void handleZoomButton() {
   }
 }
 
-void saveConfigToPrefs(float lat, float lon, float radiusKm, int offsetHours) {
-  prefs.begin("radar", false);
-  prefs.putFloat("lat", lat);
-  prefs.putFloat("lon", lon);
-  prefs.putFloat("radius", radiusKm);
-  prefs.putInt("tzOffset", offsetHours);
-  prefs.end();
-}
 
-void loadPositionFromPrefs() {
-  prefs.begin("radar", true);
-  centerLat = prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT));
-  centerLon = prefs.getFloat("lon", atof(DEFAULT_CENTER_LON));
-  currentRadiusKm = prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT));
-  timeOffsetHours = prefs.getInt("tzOffset", DEFAULT_TIME_OFFSET_HOURS);
-  prefs.end();
+// ==========================================
+// 5. WIFI & CONFIGURATION PORTAL
+// ==========================================
 
-  Serial.printf("Poloha: %.6f, %.6f\n", centerLat, centerLon);
-  Serial.printf("Predvolený zoom: %.0f km\n", currentRadiusKm);
-  Serial.printf("Časový offset zobrazenia: %+d h\n", timeOffsetHours);
-}
-
+/**
+ * @brief Connects to WiFi or launches AP Portal with configuration input fields.
+ */
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
   delay(100);
@@ -247,10 +357,7 @@ void connectWiFi() {
   showStatus("ESP MeteoRadar v1.0\nSHMU Slovensko\nWiFi portal...");
   delay(500);
 
-  char latBuf[16];
-  char lonBuf[16];
-  char radiusBuf[8];
-  char offsetBuf[8];
+  char latBuf[16], lonBuf[16], radiusBuf[8], offsetBuf[8];
   snprintf(latBuf, sizeof(latBuf), "%.6f", centerLat);
   snprintf(lonBuf, sizeof(lonBuf), "%.6f", centerLon);
   snprintf(radiusBuf, sizeof(radiusBuf), "%.0f", currentRadiusKm);
@@ -269,20 +376,16 @@ void connectWiFi() {
   WiFiManagerParameter p_lon("lon", "Zemepisná dĺžka / longitude", lonBuf, sizeof(lonBuf));
   WiFiManagerParameter p_radius("radius", "Predvolený rozsah km", radiusBuf, sizeof(radiusBuf));
   WiFiManagerParameter p_offset("offset", "Časový offset hodín (+2 leto, +1 zima)", offsetBuf, sizeof(offsetBuf));
+  
   wm.addParameter(&p_lat);
   wm.addParameter(&p_lon);
   wm.addParameter(&p_radius);
   wm.addParameter(&p_offset);
 
-  Serial.println("Spúšťam WiFiManager...");
-  
-  // FIX APPLIED HERE:
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
-  
   bool ok = wm.autoConnect("ESPMeteoRadar");
 
   if (!ok || WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFiManager: nepripojené");
     showStatus("WiFi chyba\nPodrz tlacidlo 3s\npre reset");
     return;
   }
@@ -300,13 +403,15 @@ void connectWiFi() {
   if (newOffset >= -12 && newOffset <= 14) {
     timeOffsetHours = newOffset;
   }
+  
   saveConfigToPrefs(centerLat, centerLon, currentRadiusKm, timeOffsetHours);
   initZoomLevel();
-
-  Serial.print("WiFi OK, IP: ");
-  Serial.println(WiFi.localIP());
-  Serial.printf("Nastavená poloha: %.6f, %.6f, zoom %.0f km, offset %+d h\n", centerLat, centerLon, currentRadiusKm, timeOffsetHours);
 }
+
+
+// ==========================================
+// 6. API PARSING & RADAR DOWNLOAD
+// ==========================================
 
 String extractRadarTimestamp(const String& filename) {
   const String prefix = "cmax.kruh.";
@@ -320,8 +425,8 @@ String extractRadarTimestamp(const String& filename) {
   String hhmm = filename.substring(dateStart + 9, dateStart + 13);
 
   if (filename[dateStart + 8] != '.') return "";
-  for (int i = 0; i < date.length(); i++) if (!isDigit(date[i])) return "";
-  for (int i = 0; i < hhmm.length(); i++) if (!isDigit(hhmm[i])) return "";
+  for (size_t i = 0; i < date.length(); i++) if (!isDigit(date[i])) return "";
+  for (size_t i = 0; i < hhmm.length(); i++) if (!isDigit(hhmm[i])) return "";
 
   return date + hhmm;
 }
@@ -356,15 +461,10 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
   WiFiClient* stream = http.getStreamPtr();
   const int contentLength = http.getSize();
 
-  String window;
-  String latest;
-  String newestTs;
-  int foundCount = 0;
-  int bytesRead = 0;
+  String window, latest, newestTs;
+  int foundCount = 0, bytesRead = 0;
   uint32_t lastDataMs = millis();
   uint8_t buf[512];
-
-  Serial.println("Prechádzam API stream a hľadám najnovší timestamp v názve PNG...");
 
   while (http.connected() && (contentLength < 0 || bytesRead < contentLength)) {
     size_t avail = stream->available();
@@ -375,7 +475,6 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
 
       bytesRead += n;
       lastDataMs = millis();
-
       window += String((const char*)buf, n);
 
       String candidate = findLatestPngNameInText(window, newestTs, foundCount);
@@ -385,39 +484,32 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
         window = window.substring(window.length() - 200);
       }
     } else {
-      if (millis() - lastDataMs > 10000) {
-        Serial.println("Timeout pri čítaní API");
-        break;
-      }
+      if (millis() - lastDataMs > 10000) break;
       delay(1);
     }
   }
 
   String candidate = findLatestPngNameInText(window, newestTs, foundCount);
   if (!candidate.isEmpty()) latest = candidate;
-
-  Serial.printf("API prečítané: %d B, nájdených kandidátov: %d\n", bytesRead, foundCount);
-  if (!latest.isEmpty()) {
-    Serial.print("Vybraný timestamp: ");
-    Serial.println(newestTs);
-  }
   return latest;
 }
 
+/**
+ * @brief Securely downloads the latest radar image frame from the SHMÚ directory.
+ */
 bool downloadLatestRadar() {
   if (WiFi.status() != WL_CONNECTED) return false;
 
   WiFiClientSecure client;
   client.setInsecure();
+  client.setHandshakeTimeout(10000);
 
   HTTPClient http;
   http.setTimeout(15000);
-  Serial.println("Sťahujem radardata API SHMÚ...");
 
   if (!http.begin(client, SHMU_API_URL)) return false;
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("API HTTP chyba: %d\n", code);
     http.end();
     return false;
   }
@@ -425,39 +517,19 @@ bool downloadLatestRadar() {
   String latest = findLatestPngNameFromHttpStream(http);
   http.end();
 
-  if (latest.isEmpty()) {
-    Serial.println("Nenádený žiaden PNG súbor v SHMÚ API");
-    return false;
-  }
-
-  Serial.println();
-  Serial.println("================================");
-  Serial.print("Vybraný najnovší PNG: ");
-  Serial.println(latest);
-  Serial.print("Čas snímky: ");
-  Serial.println(getRadarTimeText(latest));
-  Serial.println("================================");
-
-  if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) {
-    Serial.println("Súbor už je aktuálny");
-    return true;
-  }
+  if (latest.isEmpty()) return false;
+  if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) return true;
 
   String url = String(SHMU_BASE_URL) + latest;
-  Serial.print("Sťahujem: ");
-  Serial.println(url);
-
   if (!http.begin(client, url)) return false;
   code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("PNG HTTP chyba: %d\n", code);
     http.end();
     return false;
   }
 
   File f = SPIFFS.open(RADAR_FILE, "w");
   if (!f) {
-    Serial.println("Nemožno otvoriť súbor pre zápis");
     http.end();
     return false;
   }
@@ -482,14 +554,13 @@ bool downloadLatestRadar() {
   f.close();
   http.end();
   lastPngName = latest;
-
-  Serial.print("Stiahnutý súbor: ");
-  Serial.println(latest);
-  Serial.printf("Uložené %d B\n", written);
-  Serial.print("Zobrazovaný čas snímky: ");
-  Serial.println(getRadarTimeText(latest));
   return written > 0;
 }
+
+
+// ==========================================
+// 7. PNG DECODER & RESAMPLING CALLBACKS
+// ==========================================
 
 void* pngOpen(const char* filename, int32_t* size) {
   pngFile = SPIFFS.open(filename, "r");
@@ -510,28 +581,91 @@ int32_t pngSeek(PNGFILE* handle, int32_t position) {
   return pngFile.seek(position) ? position : -1;
 }
 
+/**
+ * @brief Memory-optimized Line-by-Line Decoder & Resampler.
+ * Stretches source rows to fill target vertical spans without gaps, 
+ * using zero large heap allocations.
+ */
 int drawPngLine(PNGDRAW* pDraw) {
   int srcY = pDraw->y;
   if (srcY < crop.y1 || srcY > crop.y2) return 1;
 
-  int dstY = (int)((int64_t)(srcY - crop.y1) * TFT_H / crop.h());
-  if (dstY < 0 || dstY >= TFT_H) return 1;
-
   png.getLineAsRGB565(pDraw, line565, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
 
+  float startScreenY = mapYToScreenY((float)srcY);
+  float endScreenY = mapYToScreenY((float)srcY + 1.0f);
+
+  int syMin = constrain((int)floorf(startScreenY), 0, TFT_H - 1);
+  int syMax = constrain((int)ceilf(endScreenY), syMin, TFT_H - 1);
+
   for (int dx = 0; dx < TFT_W; dx++) {
-    int srcX = crop.x1 + (int)((int64_t)dx * crop.w() / TFT_W);
-    srcX = constrain(srcX, 0, RADAR_IMG_W - 1);
-    outLine[dx] = line565[srcX];
+    float srcX = (float)crop.x1 + ((float)dx / (float)TFT_W) * (float)crop.w();
+    int srcXInt = constrain((int)srcX, 0, RADAR_IMG_W - 1);
+    outLine[dx] = line565[srcXInt];
   }
 
-  tft.pushImage(0, dstY, TFT_W, 1, outLine);
+  for (int sy = syMin; sy <= syMax; sy++) {
+    tft.pushImage(0, sy, TFT_W, 1, outLine);
+  }
+
   return 1;
 }
 
+
+// ==========================================
+// 8. GRAPHIC OVERLAYS & RENDERING
+// ==========================================
+
+/**
+ * @brief Draws vector national border lines scaled to the current crop window.
+ */
+void drawSlovakiaBorder() {
+  for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
+    float mapX1 = (float)lonToX(SK_BORDER[i][0]);
+    float mapY1 = (float)latToY(SK_BORDER[i][1]);
+    float mapX2 = (float)lonToX(SK_BORDER[i+1][0]);
+    float mapY2 = (float)latToY(SK_BORDER[i+1][1]);
+
+    int sx1 = (int)mapXToScreenX(mapX1);
+    int sy1 = (int)mapYToScreenY(mapY1);
+    int sx2 = (int)mapXToScreenX(mapX2);
+    int sy2 = (int)mapYToScreenY(mapY2);
+
+    tft.drawLine(sx1, sy1, sx2, sy2, TFT_CYAN);
+  }
+}
+
+/**
+ * @brief Renders city name labels and red crosshair markers within viewport bounds.
+ */
+void drawCitiesOverlay() {
+  tft.setTextDatum(middle_center);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+
+  for (size_t i = 0; i < CITY_COUNT; i++) {
+    float mapX = (float)lonToX(CITIES[i].lon);
+    float mapY = (float)latToY(CITIES[i].lat);
+
+    int sx = (int)mapXToScreenX(mapX);
+    int sy = (int)mapYToScreenY(mapY);
+
+    if (sx >= 10 && sx <= TFT_W - 10 && sy >= 10 && sy <= TFT_H - 10) {
+      tft.drawLine(sx - 3, sy, sx + 3, sy, TFT_RED);
+      tft.drawLine(sx, sy - 3, sx, sy + 3, TFT_RED);
+      tft.drawString(CITIES[i].name, sx, sy - 8);
+    }
+  }
+}
+
+/**
+ * @brief Renders HUD rings, center crosshairs, timestamp, and zoom indicator.
+ */
 void drawOverlay() {
   int cx = TFT_W / 2;
   int cy = TFT_H / 2;
+
+  drawSlovakiaBorder();
+  drawCitiesOverlay();
 
   tft.drawCircle(cx, cy, TFT_W / 2 - 2, TFT_DARKGREY);
   tft.drawCircle(cx, cy, TFT_W / 4, TFT_DARKGREY);
@@ -546,27 +680,25 @@ void drawOverlay() {
   tft.drawString(getRadarTimeText(lastPngName), cx, TFT_H - 4);
 }
 
+/**
+ * @brief Decodes and renders the radar map frame directly onto the display.
+ */
 bool renderRadar() {
   if (!SPIFFS.exists(RADAR_FILE)) return false;
 
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
-  Serial.printf("Crop: x %d..%d, y %d..%d\n", crop.x1, crop.x2, crop.y1, crop.y2);
-
   tft.fillScreen(TFT_BLACK);
 
   int rc = png.open(RADAR_FILE, pngOpen, pngClose, pngRead, pngSeek, drawPngLine);
   if (rc != PNG_SUCCESS) {
-    Serial.printf("PNG open chyba: %d\n", rc);
     showStatus("PNG chyba");
     return false;
   }
 
-  Serial.printf("PNG: %d x %d\n", png.getWidth(), png.getHeight());
   rc = png.decode(nullptr, 0);
   png.close();
 
   if (rc != PNG_SUCCESS) {
-    Serial.printf("PNG decode chyba: %d\n", rc);
     showStatus("Decode chyba");
     return false;
   }
@@ -574,6 +706,11 @@ bool renderRadar() {
   drawOverlay();
   return true;
 }
+
+
+// ==========================================
+// 9. MAIN ARDUINO ENTRY POINTS
+// ==========================================
 
 void setup() {
   Serial.begin(115200);
@@ -609,6 +746,7 @@ void setup() {
 }
 
 void loop() {
+  // Periodic background check for new radar imagery based on interval defined in config.h
   if (millis() - lastUpdate >= UPDATE_INTERVAL_MS) {
     lastUpdate = millis();
     if (WiFi.status() != WL_CONNECTED) {
@@ -618,6 +756,7 @@ void loop() {
     }
     if (downloadLatestRadar()) renderRadar();
   }
+  
   handleZoomButton();
   delay(20);
 }

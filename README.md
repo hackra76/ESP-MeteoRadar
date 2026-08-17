@@ -1,11 +1,12 @@
-# SHMÚ Radar pre ESP32-C3 (Slovensko)
+# SHMÚ Radar pre ESP32-C3 (Slovensko)[cite: 2]
 
-Jednoduchý meteorologický radar postavený na **ESP32-C3** a okrúhlom **240×240 LCD displeji (GC9A01)**. Nevyžaduje žiadne ďalšie súčiastky.
-Zariadenie pravidelne sťahuje najnovší radarový snímok z otvorených dát **Slovenského hydrometeorologického ústavu (SHMÚ)** a zobrazuje okolie zadanej polohy v niekoľkých úrovniach priblíženia.
+Kompaktný meteorologický radar postavený na **ESP32-C3** a okrúhlom **240×240 LCD displeji (GC9A01)**[cite: 2]. Zariadenie pravidelne sťahuje najnovšie radarové dáta zo Slovenského hydrometeorologického ústavu (**SHMÚ**), dynamicky ich oreže a presne resampluje okolo zvolenej GPS polohy[cite: 2]. 
 
-Pôvodný projekt (pre Česko): https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovym-datum/
+Súčasťou zobrazenia je vektorová **mapa štátnej hranice Slovenska**, názvy a značky **väčších miest** s krížikmi, rozsahové kruhy a živá časová pečiatka.
 
-3D model: https://makerworld.com/cs/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083
+Pôvodný projekt (pre Česko): https://www.petanovo.cz/esp-meteoradar-od-letadel-k-meteo-radarovym-datum/[cite: 2]
+
+3D model krabičky: https://makerworld.com/cs/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083[cite: 2]
 
 <p align="center">
     <img src="data/chmi_radar_1.jpg" width="350">
@@ -13,121 +14,99 @@ Pôvodný projekt (pre Česko): https://www.petanovo.cz/esp-meteoradar-od-letade
 
 ---
 
-## Funkcie
+## 🚀 Hlavné funkcie
 
-- 🌧️ Sťahovanie najnovších radarových snímok SHMÚ (CMAX kompozit)
-- 📡 Automatická aktualizácia každých 2,5 minúty
-- 📍 Nastavenie vlastnej polohy (zemepisná šírka a dĺžka na Slovensku)
-- 🔍 Prepínanie zoomu:
-  - 10 km
-  - 25 km
-  - 50 km
-  - 100 km
-- 📶 Konfigurácia WiFi pomocou **WiFiManageru**
-- 💾 Uloženie nastavení do internej pamäte ESP32 (Preferences)
-- 🕒 Nastaviteľný časový posun zobrazeného času radarového snímku (+1 hodina v zime, +2 hodiny v lete)
-- 🔘 Ovládanie jedným tlačidlom
-- 🖥️ Podpora okrúhleho displeja GC9A01 (240×240)
-
----
-
-# Použitý hardware
-
-- ESP32-C3
-- Okrúhly TFT displej GC9A01 (240×240)
-- Jedno tlačidlo (súčasťou ESP32-C3 Super Mini)
+- 🌧️ **Živé dáta SHMÚ:** Automatické sťahovanie najnovších CMAX kompozitných radarových snímok z open-data portambu SHMÚ[cite: 2].
+- 🗺️ **Vektorová mapa SR & Mesta:** Vykreslenie detailného obrysu štátnej hranice Slovenska a značiek kľúčových miest (Bratislava, Košice, Prešov, Bardejov, Žilina atď.) s dynamickým filtrovaním podľa zoomu.
+- 🔍 **Plynulý zoom s resamplingom:** 4 úrovne priblíženia bez deformácií a vizuálnych medzier v riadkoch[cite: 2]:
+  - **10 km**[cite: 2]
+  - **25 km**[cite: 2]
+  - **50 km**[cite: 2]
+  - **100 km**[cite: 2]
+- 🔄 **Auto-aktualizácia:** Pravidelná obnova snímok v pozadí (konfigurovateľné v `config.h`).
+- 📶 **WiFiManager:** Jednoduché prvotné nastavenie WiFi siete a polohy cez webový portál bez nutnosti hardcoded údajov v kóde[cite: 2].
+- 💾 **Trvalá pamäť (NVS):** Ukladanie GPS polohy, zvoleného zoomu a časového posunu do `Preferences`[cite: 2].
+- 🕒 **Časová zóna:** Automatický prepočet času snímky (UTC na SEČ/SELČ pomocou voliteľného offsetu +1/+2 hodiny)[cite: 2].
+- 🔘 **Jedno tlačidlo:** Ovládanie prepínania zoomu a hardvérový factory reset pri štarte[cite: 2].
 
 ---
 
-# Zapojenie
+# 🛠️ Použitý hardware
 
-## Displej
+- **ESP32-C3 SuperMini** (príp. ekvivalentná doska s ESP32-C3)[cite: 2]
+- Okrúhly TFT displej **GC9A01** (240×240 pixelov, SPI rozhranie)[cite: 2]
+- Integrované tlačidlo (priamo na doske SuperMini ako BOOT tlačidlo)[cite: 2]
 
-| Displej | ESP32-C3 |
-|----------|-----------|
-| MOSI | GPIO3 |
-| SCLK | GPIO4 |
-| CS | GPIO1 |
-| DC | GPIO10 |
-| RESET | GPIO0 |
+---
+
+# 🔌 Zapojenie
+
+## Displej (GC9A01)
+
+| Displej | ESP32-C3 Pin | Popis |
+| :--- | :--- | :--- |
+| **MOSI** | GPIO3 | SPI Data Out |
+| **SCLK** | GPIO4 | SPI Clock |
+| **CS** | GPIO1 | Chip Select |
+| **DC** | GPIO10 | Data / Command |
+| **RESET** | GPIO0 | Hardware Reset |
+| **BLN / VCC** | 3.3V | Napájanie displeja |
+| **GND** | GND | Zostava zeme |
 
 ## Tlačidlo
 
-| Tlačidlo | ESP32-C3 |
-|-----------|-----------|
-| Jeden kontakt | GPIO9 |
-| Druhý kontakt | GND |
+| Tlačidlo | ESP32-C3 Pin |
+| :--- | :--- |
+| **Jeden kontakt** | GPIO9 (Tlačidlo BOOT) |
+| **Druhý kontakt** | GND |
 
-V programe je použitý interný **pull-up** rezistor. Toto tlačidlo je integrované priamo na doske ESP32-C3 Super Mini ako tlačidlo BOOT.
-
----
-
-# Ovládanie
-
-## Krátke stlačenie tlačidla
-
-Prepína rozsah radaru:
-
-```
-10 km → 25 km → 50 km → 100 km
-```
-
-## Dlhé stlačenie (cca 3 sekundy)
-
-Vymaže uložené nastavenia a znova spustí WiFiManager.
+> *Poznámka: V kóde je softvérovo aktivovaný vnútorný `INPUT_PULLUP`, nie sú nutné externé rezistory.*
 
 ---
 
-# Konfigurácia
+# 🕹️ Ovládanie
 
-Pri prvom spustení (alebo po dlhom podržaní tlačidla) sa vytvorí WiFi sieť:
-
-```
-ESP-MeteoRadar
-```
-
-Po pripojení je možné nastaviť:
-
-- WiFi sieť
-- heslo
-- zemepisnú šírku (napr. 48.1486 pre Bratislavu, 48.6690 pre Banskú Bystricu)
-- zemepisnú dĺžku (napr. 17.1077 pre Bratislavu, 19.6990 pre Banskú Bystricu)
-- predvolený zoom
-- časový posun zobrazeného času (+1 hodina v zime, +2 hodiny v lete)
-
-Všetky nastavenia sú uložené v internej pamäti ESP32.
+- **Krátke stlačenie tlačidla:** Prepína rozsah (radius) radaru v cykle[cite: 2]:
+  $$\text{10 km} \rightarrow \text{25 km} \rightarrow \text{50 km} \rightarrow \text{100 km}$$
+- **Dlhé stlačenie (podržanie ≥ 3 sekundy pri zapnutí alebo chode):** Vymaže uložené dáta v pamäti, vyresetuje WiFiManager a restartuje zariadenie do režimu konfiguračného portálu[cite: 2].
 
 ---
 
-# Zdroj radarových dát
+# ⚙️ Konfigurácia a prvé spustenie
 
-Projekt využíva otvorené dáta Slovenského hydrometeorologického ústavu (SHMÚ):
-
-https://www.shmu.sk/sk/?page=1&id=meteo_radar
-https://opendata.shmu.sk/
-
----
-
-# Použité knižnice
-
-- LovyanGFX
-- PNGdec
-- WiFiManager
-- Preferences
+1. Po prvom zapnutí (alebo resete) zariadenie vytvorí otvorenú WiFi sieť s názvom **`ESPMeteoRadar`**[cite: 2].
+2. Pripojte sa k tejto sieti mobilom alebo PC. Automaticky vyskočí konfiguračná stránka (príp. prejdite na `192.168.4.1`)[cite: 2].
+3. Vyberte svoju WiFi sieť, zadajte heslo a doplňte voliteľné parametre[cite: 2]:
+   - **Zemepisná šírka / Latitude** (napr. `49.2918` pre Bardejov, `48.1486` pre Bratislavu)[cite: 2]
+   - **Zemepisná dĺžka / Longitude** (napr. `21.2727` pre Bardejov, `17.1077` pre Bratislavu)[cite: 2]
+   - **Predvolený rozsah km** (`10`, `25`, `50` alebo `100`)[cite: 2]
+   - **Časový offset** (`+1` pre zimu, `+2` pre letný čas)[cite: 2]
+4. Zariadenie sa reštartuje, uloží parametre do flash pamäte a stiahne aktuálne radarové dáta[cite: 2].
 
 ---
 
-# Možné budúce rozšírenia
+# 📦 Inštalácia a kompilácia (PlatformIO)
 
-- mapa Slovenskej republiky ako podklad
-- zobrazenie svetových strán
-- názvy väčších miest
-- legenda intenzity zrážok
-- OTA aktualizácia firmware
-- animácia posledných radarových snímok
+Projekt je pripravený pre vývojové prostredie **VS Code + PlatformIO**.
+
+1. Klonujte alebo stiahnite tento repozitár.
+2. Otvorte priečinok projektu v aplikácii **Visual Studio Code**.
+3. PlatformIO automaticky detekuje závislosti definované v `platformio.ini`:
+   - `LovyanGFX`[cite: 2]
+   - `PNGdec`[cite: 2]
+   - `WiFiManager`[cite: 2]
+   - `Preferences`[cite: 2]
+4. Pripojte ESP32-C3 k PC cez USB kábel, kliknite na ikonu **Build** ($\checkmark$) a následne **Upload** ($\rightarrow$) v spodnej lište PlatformIO.
 
 ---
 
-# Licencia
+# 📚 Zdroj dát a poďakovanie
 
-Projekt je uvoľnený pod licenciou **MIT**.
+- **Meteorologické dáta:** Slovenský hydrometeorologický ústav (SHMÚ) – [Open Data SHMÚ](https://opendata.shmu.sk/)[cite: 2]
+- **Inšpirácia a pôvodný koncept:** [Petanovo.cz](https://www.petanovo.cz/)[cite: 2]
+
+---
+
+# 📄 Licencia
+
+Tento projekt je šírený pod licenciou **MIT**. Voľne upravené a prispôsobené pre podmienky Slovenskej republiky.
