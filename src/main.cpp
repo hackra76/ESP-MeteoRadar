@@ -73,15 +73,6 @@ CropBox makeCrop(float lat, float lon, float radiusKm) {
   return {x1, y1, x2, y2};
 }
 
-/*
-void showStatus(const String& text) {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextDatum(middle_center);
-  tft.drawString(text, TFT_W / 2, TFT_H / 2);
-}
-*/
-
 void showStatus(const String& text){
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -109,13 +100,9 @@ void showStatus(const String& text){
   }
 }
 
-
 bool renderRadar();
 
 String getRadarTimeText(const String& filename) {
-  // Názov má tvar napr. cmax.kruh.20260811.1010.0.png
-  // Čas v názve nechávame pre výber najnovšieho súboru bez zmeny,
-  // offset sa použije iba pre zobrazenie na displeji.
   const String prefix = "cmax.kruh.";
   int start = filename.indexOf(prefix);
   if (start < 0) return "--:--";
@@ -139,7 +126,6 @@ String getRadarTimeText(const String& filename) {
   return String(out);
 }
 
-
 void resetSettingsAndRestart() {
   Serial.println();
   Serial.println("================================");
@@ -149,10 +135,10 @@ void resetSettingsAndRestart() {
   showStatus("Reset nastavenia...");
 
   WiFiManager wm;
-  wm.resetSettings();        // zmaze ulozene WiFi udaje z NVS
+  wm.resetSettings();
 
   prefs.begin("radar", false);
-  prefs.clear();             // zmaze ulozenu polohu a predvoleny zoom
+  prefs.clear();
   prefs.end();
 
   delay(1000);
@@ -217,7 +203,6 @@ void handleZoomButton() {
       buttonPressStartMs = millis();
       longPressHandled = false;
     } else {
-      // Krátke stlačenie = prepnutie zoomu. Ak už prebehol dlhý stisk, zoom sa neprepína.
       if (!longPressHandled) {
         nextZoomLevel();
         saveRadiusToPrefs(currentRadiusKm);
@@ -276,7 +261,6 @@ void connectWiFi() {
   wm.setConnectTimeout(15);
   wm.setBreakAfterConfig(true);
 
-  // Ked sa vytvori WiFi AP, zobrazi sa to priamo na displeji
   wm.setAPCallback([](WiFiManager *myWiFiManager) {
     showStatus("WiFi Portal aktivny!\n\nPripojte sa na WiFi:\nESPMeteoRadar\n\nIP: 192.168.4.1");
   });
@@ -291,6 +275,10 @@ void connectWiFi() {
   wm.addParameter(&p_offset);
 
   Serial.println("Spúšťam WiFiManager...");
+  
+  // FIX APPLIED HERE:
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  
   bool ok = wm.autoConnect("ESPMeteoRadar");
 
   if (!ok || WiFi.status() != WL_CONNECTED) {
@@ -321,7 +309,6 @@ void connectWiFi() {
 }
 
 String extractRadarTimestamp(const String& filename) {
-  // Názov má tvar: cmax.kruh.20260811.1010.0.png
   const String prefix = "cmax.kruh.";
   int start = filename.indexOf(prefix);
   if (start < 0) return "";
@@ -336,7 +323,7 @@ String extractRadarTimestamp(const String& filename) {
   for (int i = 0; i < date.length(); i++) if (!isDigit(date[i])) return "";
   for (int i = 0; i < hhmm.length(); i++) if (!isDigit(hhmm[i])) return "";
 
-  return date + hhmm; // napr. 202608111010 - dobre sa porovnáva ako text
+  return date + hhmm;
 }
 
 String findLatestPngNameInText(const String& text, String& newestTs, int& foundCount) {
@@ -349,7 +336,7 @@ String findLatestPngNameInText(const String& text, String& newestTs, int& foundC
     if (idx < 0) break;
 
     int end = text.indexOf(".png", idx);
-    if (end < 0) break; // kandidát nie je v tomto kusu textu kompletný
+    if (end < 0) break;
 
     String name = text.substring(idx, end + 4);
     String ts = extractRadarTimestamp(name);
@@ -394,7 +381,6 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
       String candidate = findLatestPngNameInText(window, newestTs, foundCount);
       if (!candidate.isEmpty()) latest = candidate;
 
-      // Necháme presah, kedy by bol na hranici chunku rozdelený názov súboru.
       if (window.length() > 300) {
         window = window.substring(window.length() - 200);
       }
@@ -407,7 +393,6 @@ String findLatestPngNameFromHttpStream(HTTPClient& http) {
     }
   }
 
-  // Doprohľadávanie zvyšku okna.
   String candidate = findLatestPngNameInText(window, newestTs, foundCount);
   if (!candidate.isEmpty()) latest = candidate;
 
@@ -609,7 +594,6 @@ void setup() {
   if (!SPIFFS.begin(true)) {
     showStatus("Chyba SPIFFS!");
     delay(3000);
-    // Pokracujeme aj bez SPIFFS, portal bude fungovat
   }
 
   connectWiFi();
