@@ -9,7 +9,7 @@ Pôvodný projekt (pre Česko): https://www.petanovo.cz/esp-meteoradar-od-letade
 3D model krabičky: https://makerworld.com/cs/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083[cite: 2]
 
 <p align="center">
-    <img src="data/chmi_radar_1.jpg" width="350">
+    <img src="data/shmu_radar_1.jpg" width="350">
 </p>
 
 ---
