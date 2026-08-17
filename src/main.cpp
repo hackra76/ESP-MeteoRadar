@@ -90,8 +90,8 @@ float centerLat = atof(DEFAULT_CENTER_LAT);
 float centerLon = atof(DEFAULT_CENTER_LON);
 int timeOffsetHours = DEFAULT_TIME_OFFSET_HOURS;
 
-// Available zoom steps in kilometers radius from center
-static const float ZOOM_LEVELS_KM[] = {10.0f, 25.0f, 50.0f, 100.0f};
+// Available zoom steps in kilometers radius from center (including 250km for whole Slovakia)
+static const float ZOOM_LEVELS_KM[] = {10.0f, 25.0f, 50.0f, 100.0f, 250.0f};
 static constexpr int ZOOM_LEVEL_COUNT = sizeof(ZOOM_LEVELS_KM) / sizeof(ZOOM_LEVELS_KM[0]);
 int zoomIndex = 1;
 float currentRadiusKm = atof(DEFAULT_RADIUS_KM_TEXT);
@@ -397,7 +397,7 @@ void connectWiFi() {
 
   if (newLat > 46.5f && newLat < 50.5f) centerLat = newLat;
   if (newLon > 14.0f && newLon < 23.5f) centerLon = newLon;
-  if (newRadius == 10.0f || newRadius == 25.0f || newRadius == 50.0f || newRadius == 100.0f) {
+  if (newRadius == 10.0f || newRadius == 25.0f || newRadius == 50.0f || newRadius == 100.0f || newRadius == 250.0f) {
     currentRadiusKm = newRadius;
   }
   if (newOffset >= -12 && newOffset <= 14) {
