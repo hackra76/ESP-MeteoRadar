@@ -1,8 +1,9 @@
 /**
  * @file main.cpp
  * @brief ESP32-C3 MeteoRadar + ADSB Plane Radar (Slovakia)
- * @details Obsahuje NVS ukladanie, WiFiManager parametre, zelenú mriežku,
- *          Edge Dots a HARDVÉROVÉ PRERUŠENIE (ISR) pre okamžitú reakciu tlačidla.
+ * @details Obsahuje NVS ukladanie, WiFiManager parametre, hybridnú radarovú 
+ *          mriežku s mapou SR a mestami, Edge Dots pre lietadlá, indikáciu času 
+ *          a HARDVÉROVÉ PRERUŠENIE (ISR) pre tlačidlo.
  */
 
 #include <Arduino.h>
@@ -28,7 +29,7 @@ File pngFile;
 
 static const char* RADAR_FILE = "/radar.png";
 
-// Detailnejšia hranica SR (zahustený polygón pre režim Počasia)
+// Detailnejšia hranica SR (zahustený polygón)
 static const float SK_BORDER[][2] = {
   {16.96, 48.48}, {16.90, 48.38}, {16.85, 48.28}, {16.95, 48.21}, {17.06, 48.14},
   {17.11, 48.08}, {17.16, 48.02}, {17.40, 47.90}, {17.65, 47.78}, {17.87, 47.77},
@@ -80,7 +81,7 @@ float currentRadiusKm = atof(DEFAULT_RADIUS_KM_TEXT);
 // === INTERRUPT & BUTTON VARIABLES ===
 volatile bool zoomRequested = false;
 volatile uint32_t lastBtnInterruptMs = 0;
-static constexpr uint32_t DEBOUNCE_DELAY_MS = 200; // Ochrana pred zákmity tlačidla
+static constexpr uint32_t DEBOUNCE_DELAY_MS = 200;
 
 // === CAROUSEL STATE MACHINE VARIABLES ===
 enum AppMode { MODE_WEATHER, MODE_PLANES };
@@ -184,6 +185,15 @@ String getRadarTimeText(const String& filename) {
   return String(out);
 }
 
+String getCurrentSystemTimeText() {
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  if (t->tm_year < 100) return "--:--"; // Ak čas z NTP ešte nie je synchronizovaný
+  char out[6];
+  snprintf(out, sizeof(out), "%02d:%02d", t->tm_hour, t->tm_min);
+  return String(out);
+}
+
 void resetSettingsAndRestart() {
   detachInterrupt(digitalPinToInterrupt(ZOOM_BUTTON_PIN));
   showStatus("Reset nastavenia...");
@@ -206,7 +216,6 @@ void processZoomRequest() {
   if (!zoomRequested) return;
   zoomRequested = false;
 
-  // Ak je tlačidlo podržané pri bežnom chode dlhšie ako 3 sekundy -> Reset
   if (digitalRead(ZOOM_BUTTON_PIN) == LOW) {
     uint32_t holdStart = millis();
     while (digitalRead(ZOOM_BUTTON_PIN) == LOW) {
@@ -218,7 +227,6 @@ void processZoomRequest() {
     }
   }
 
-  // Prepneme zoom úroveň
   zoomIndex = (zoomIndex + 1) % ZOOM_LEVEL_COUNT;
   currentRadiusKm = ZOOM_LEVELS_KM[zoomIndex];
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
@@ -291,6 +299,7 @@ void connectWiFi() {
   prefs.end();
 
   carouselIntervalMs = (uint32_t)carouselIntervalSec * 1000;
+  configTime(timeOffsetHours * 3600, 0, "pool.ntp.org", "time.nist.gov");
 }
 
 
@@ -328,7 +337,7 @@ bool downloadLatestRadar() {
         WiFiClient* stream = http.getStreamPtr();
         uint8_t buf[512];
         while (http.connected()) {
-          processZoomRequest(); // Kontrola tlačidla aj počas čítania zo siete
+          processZoomRequest();
           size_t avail = stream->available();
           if (avail) {
             size_t toRead = (avail < sizeof(buf)) ? avail : sizeof(buf);
@@ -491,11 +500,6 @@ void fetchAndDrawPlanes() {
         tft.fillScreen(TFT_BLACK);
         drawPlaneRadarGrid();
 
-        tft.setFont(&fonts::Font0);
-        tft.setTextDatum(textdatum_t::bottom_center);
-        tft.setTextColor(tft.color565(0, 255, 0), TFT_BLACK);
-        tft.drawString("Lietadiel: " + String(acList.size()), TFT_W / 2, TFT_H - 4);
-
         int cx = TFT_W / 2;
         int cy = TFT_H / 2;
 
@@ -566,35 +570,8 @@ void fetchAndDrawPlanes() {
 void drawPlaneRadarGrid() {
   int cx = TFT_W / 2;
   int cy = TFT_H / 2;
-  uint16_t gridColor = tft.color565(0, 200, 0);     
-  uint16_t dimGridColor = tft.color565(0, 80, 0);   
 
-  tft.drawLine(cx - 110, cy, cx + 110, cy, dimGridColor);
-  tft.drawLine(cx, cy - 110, cx, cy + 110, dimGridColor);
-
-  tft.drawCircle(cx, cy, 35, gridColor);
-  tft.drawCircle(cx, cy, 70, gridColor);
-  tft.drawCircle(cx, cy, 105, gridColor);
-
-  tft.setFont(&fonts::Font0);
-  tft.setTextDatum(textdatum_t::middle_center);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("N", cx, 8);
-  tft.drawString("S", cx, TFT_H - 8);
-  tft.drawString("W", 8, cy);
-  tft.drawString("E", TFT_W - 8, cy);
-
-  tft.setTextDatum(textdatum_t::middle_right);
-  tft.setTextColor(tft.color565(0, 255, 0), TFT_BLACK);
-  tft.drawString(String((int)currentRadiusKm) + "km", TFT_W - 16, cy);
-}
-
-void drawWeatherOverlay(bool showTime) {
-  int cx = TFT_W / 2;
-  int cy = TFT_H / 2;
-
-  tft.setFont(&fonts::Font0);
-
+  // 1. VY KRESLENIE MAPY SLOVENSKA (Azúrová hranica)
   for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
     int sx1 = (int)mapXToScreenX(lonToX(SK_BORDER[i][0]));
     int sy1 = (int)mapYToScreenY(latToY(SK_BORDER[i][1]));
@@ -603,6 +580,8 @@ void drawWeatherOverlay(bool showTime) {
     tft.drawLine(sx1, sy1, sx2, sy2, TFT_CYAN);
   }
 
+  // 2. DYNAMICKÉ FILTROVANIE MIEST PODĽA ZOOMU
+  tft.setFont(&fonts::Font0);
   tft.setTextDatum(textdatum_t::middle_center);
   tft.setTextColor(TFT_ORANGE, TFT_BLACK);
   for (size_t i = 0; i < CITY_COUNT; i++) {
@@ -617,6 +596,69 @@ void drawWeatherOverlay(bool showTime) {
     }
   }
 
+  // 3. RADAROVÁ MRIEŽKA & KRUHY
+  uint16_t gridColor = tft.color565(0, 200, 0);     
+  uint16_t dimGridColor = tft.color565(0, 80, 0);   
+
+  // Jemný zelený kríž
+  tft.drawLine(cx - 110, cy, cx + 110, cy, dimGridColor);
+  tft.drawLine(cx, cy - 110, cx, cy + 110, dimGridColor);
+
+  // Koncentrické zelené kruhy
+  tft.drawCircle(cx, cy, 35, gridColor);
+  tft.drawCircle(cx, cy, 70, gridColor);
+  tft.drawCircle(cx, cy, 105, gridColor);
+
+  // Svetové strany (N, E, S, W)
+  tft.setTextDatum(textdatum_t::middle_center);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("N", cx, 8);
+  tft.drawString("S", cx, TFT_H - 8);
+  tft.drawString("W", 8, cy);
+  tft.drawString("E", TFT_W - 8, cy);
+
+  // 4. HORNÝ INDIKÁTOR ZOOMU (Na rovnakom mieste ako pri počasí)
+  tft.setTextDatum(textdatum_t::top_center);
+  tft.setTextColor(tft.color565(0, 255, 0), TFT_BLACK);
+  tft.drawString(String((int)currentRadiusKm) + " km", cx, 4);
+
+  // 5. SPODNÝ INDIKÁTOR ČASU AKTUALIZÁCIE
+  tft.setTextDatum(textdatum_t::bottom_center);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(getCurrentSystemTimeText(), cx, TFT_H - 4);
+}
+
+void drawWeatherOverlay(bool showTime) {
+  int cx = TFT_W / 2;
+  int cy = TFT_H / 2;
+
+  tft.setFont(&fonts::Font0);
+
+  // Hranice SR
+  for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
+    int sx1 = (int)mapXToScreenX(lonToX(SK_BORDER[i][0]));
+    int sy1 = (int)mapYToScreenY(latToY(SK_BORDER[i][1]));
+    int sx2 = (int)mapXToScreenX(lonToX(SK_BORDER[i+1][0]));
+    int sy2 = (int)mapYToScreenY(latToY(SK_BORDER[i+1][1]));
+    tft.drawLine(sx1, sy1, sx2, sy2, TFT_CYAN);
+  }
+
+  // DYNAMICKÉ FILTROVANIE MIEST PODĽA ZOOMU
+  tft.setTextDatum(textdatum_t::middle_center);
+  tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+  for (size_t i = 0; i < CITY_COUNT; i++) {
+    if (currentRadiusKm >= 100.0f && !CITIES[i].isMajor) continue;
+
+    int sx = (int)mapXToScreenX(lonToX(CITIES[i].lon));
+    int sy = (int)mapYToScreenY(latToY(CITIES[i].lat));
+    if (sx >= 10 && sx <= TFT_W - 10 && sy >= 10 && sy <= TFT_H - 10) {
+      tft.drawLine(sx - 2, sy, sx + 2, sy, TFT_RED);
+      tft.drawLine(sx, sy - 2, sx, sy + 2, TFT_RED);
+      tft.drawString(CITIES[i].name, sx, sy - 6);
+    }
+  }
+
+  // Kruhy a zameriavač pre počasie
   tft.drawCircle(cx, cy, TFT_W / 2 - 2, TFT_DARKGREY);
   tft.drawCircle(cx, cy, TFT_W / 4, TFT_DARKGREY);
   tft.drawLine(cx - 6, cy, cx + 6, cy, TFT_WHITE);
@@ -712,7 +754,6 @@ void setup() {
   SPIFFS.begin(true);
   connectWiFi();
 
-  // Aktivácia hardvérového prerušenia pre tlačidlo (spadajúca hrana -> FALLING)
   attachInterrupt(digitalPinToInterrupt(ZOOM_BUTTON_PIN), buttonISR, FALLING);
   
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
@@ -735,7 +776,6 @@ void setup() {
 void loop() {
   uint32_t now = millis();
 
-  // Spracovanie požiadavky z hardvérového prerušenia
   processZoomRequest();
 
   if (WiFi.status() != WL_CONNECTED) {
