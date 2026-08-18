@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
  * @brief ESP32-C3 MeteoRadar + ADSB Plane Radar (Slovakia)
- * @details Bleskový štart UI, inteligentné zobrazenie trasy letísk (ak existujú),
- *          vojenské lietadlá na červeno, kompaktný 3/4-riadkový štítok a detailná hranica SR.
+ * @details Obsahuje kompletne obnovené NVS ukladanie, WiFiManager parametre, 
+ *          dynamické filtrovanie miest, bleskový štart a ADSB tracker.
  */
 
 #include <Arduino.h>
@@ -47,12 +47,15 @@ static const float SK_BORDER[][2] = {
 };
 static constexpr size_t SK_BORDER_COUNT = sizeof(SK_BORDER) / sizeof(SK_BORDER[0]);
 
-struct City { const char* name; float lat; float lon; };
+// Štruktúra miest s príznakom priority zobrazenia (isMajor)
+struct City { const char* name; float lat; float lon; bool isMajor; };
 static const City CITIES[] = {
-  {"BA", 48.1486, 17.1077}, {"TT", 48.3775, 17.5883}, {"NR", 48.3061, 18.0864},
-  {"TN", 48.8945, 18.0444}, {"ZA", 49.2231, 18.7397}, {"BB", 48.7363, 19.1462},
-  {"PO", 48.9984, 21.2393}, {"KE", 48.7164, 21.2611}, {"BJ", 49.2918, 21.2727},
-  {"PP", 49.0595, 20.2978}, {"MI", 48.7547, 21.9195}, {"LC", 48.3294, 19.6648}
+  {"BA", 48.1486, 17.1077, true},  {"TT", 48.3775, 17.5883, false},
+  {"NR", 48.3061, 18.0864, true},  {"TN", 48.8945, 18.0444, false},
+  {"ZA", 49.2231, 18.7397, true},  {"BB", 48.7363, 19.1462, true},
+  {"PO", 48.9984, 21.2393, true},  {"KE", 48.7164, 21.2611, true},
+  {"BJ", 49.2918, 21.2727, false}, {"PP", 49.0595, 20.2978, false},
+  {"MI", 48.7547, 21.9195, false}, {"LC", 48.3294, 19.6648, false}
 };
 static constexpr size_t CITY_COUNT = sizeof(CITIES) / sizeof(CITIES[0]);
 
@@ -100,7 +103,7 @@ struct AircraftData {
   float gs_knots;
   float vrate_fpm;
   bool is_mil;
-  char route[8]; // ODKIAĽ-KAM (napr. PRG-BTS)
+  char route[8];
   char callsign[9];
   char type[5];
   char alt[12];
@@ -228,16 +231,56 @@ void handleZoomButton() {
 
 void connectWiFi() {
   WiFi.mode(WIFI_STA); delay(100);
-  showStatus("ESP MeteoRadar v1.1\nPripajam WiFi...");
+  showStatus("ESP MeteoRadar v1.2\nPripajam WiFi...");
+
+  // Obnovenie načítania z Preferences pre predvyplnenie
+  prefs.begin("radar", true);
+  String curLat = String(prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT)), 4);
+  String curLon = String(prefs.getFloat("lon", atof(DEFAULT_CENTER_LON)), 4);
+  String curRad = String((int)prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT)));
+  String curOff = String(prefs.getInt("offset", DEFAULT_TIME_OFFSET_HOURS));
+  prefs.end();
+
+  WiFiManagerParameter custom_lat("lat", "Zemepisna sirka (Lat)", curLat.c_str(), 10);
+  WiFiManagerParameter custom_lon("lon", "Zemepisna dlzka (Lon)", curLon.c_str(), 10);
+  WiFiManagerParameter custom_rad("radius", "Predvoleny rozsah (km)", curRad.c_str(), 5);
+  WiFiManagerParameter custom_off("offset", "Casovy offset (hodiny)", curOff.c_str(), 3);
+
   WiFiManager wm;
   wm.setConfigPortalTimeout(300);
   wm.setConnectTimeout(15);
   wm.setBreakAfterConfig(true);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
+
+  wm.addParameter(&custom_lat);
+  wm.addParameter(&custom_lon);
+  wm.addParameter(&custom_rad);
+  wm.addParameter(&custom_off);
+
   if (!wm.autoConnect("ESPMeteoRadar")) {
     showStatus("WiFi chyba\nPodrz tlacidlo 3s\npre reset");
     return;
   }
+
+  // Uloženie nových hodnôt z portálu
+  prefs.begin("radar", false);
+  if (strlen(custom_lat.getValue()) > 0) {
+    centerLat = atof(custom_lat.getValue());
+    prefs.putFloat("lat", centerLat);
+  }
+  if (strlen(custom_lon.getValue()) > 0) {
+    centerLon = atof(custom_lon.getValue());
+    prefs.putFloat("lon", centerLon);
+  }
+  if (strlen(custom_rad.getValue()) > 0) {
+    currentRadiusKm = atof(custom_rad.getValue());
+    prefs.putFloat("radius", currentRadiusKm);
+  }
+  if (strlen(custom_off.getValue()) > 0) {
+    timeOffsetHours = atoi(custom_off.getValue());
+    prefs.putInt("offset", timeOffsetHours);
+  }
+  prefs.end();
 }
 
 
@@ -336,7 +379,6 @@ void drawAircraftSymbol(int x, int y, float heading_deg, float track_deg, float 
   int wing_x = (int)roundf(cos_h * 3);
   int wing_y = (int)roundf(sin_h * 3);
 
-  // Vojenské lietadlo = ČERVENÁ, Civilné = MODRÁ
   uint16_t symbolColor = is_mil ? tft.color565(255, 0, 0) : tft.color565(0, 120, 255);
 
   tft.fillTriangle(tip_x, tip_y, base_x + wing_x, base_y + wing_y, base_x - wing_x, base_y - wing_y, symbolColor);
@@ -353,29 +395,24 @@ void drawAircraftTag(int x, int y, const AircraftData& ac) {
 
   tft.setTextDatum(tagOnRight ? textdatum_t::top_left : textdatum_t::top_right);
 
-  // Riadok 0: Kreslí sa IBA ak API poslalo skutočné kódy letísk
   if (hasRoute) {
     tft.setTextColor(tft.color565(255, 130, 255), TFT_BLACK);
     tft.drawString(ac.route, anchorX, currentY);
     currentY += 7;
   }
 
-  // Riadok 1: Callsign (Vojenské = Červená, Civilné = Biela)
   uint16_t callsignColor = ac.is_mil ? tft.color565(255, 60, 60) : tft.color565(255, 255, 255);
   tft.setTextColor(callsignColor, TFT_BLACK);
   tft.drawString(ac.callsign, anchorX, currentY);
   currentY += 7;
 
-  // Riadok 2: Typ lietadla
   tft.setTextColor(tft.color565(100, 200, 255), TFT_BLACK);
   tft.drawString(ac.type, anchorX, currentY);
   currentY += 7;
 
-  // Riadok 3: Výška
   tft.setTextColor(tft.color565(255, 255, 0), TFT_BLACK);
   tft.drawString(ac.alt, anchorX, currentY);
 
-  // Vertikálna šípka (stúpanie / klesanie) pri výške
   if (ac.vrate_fpm >= 150.0f) {
     int ax = tagOnRight ? (anchorX + tft.textWidth(ac.alt) + 3) : (anchorX - tft.textWidth(ac.alt) - 6);
     tft.fillTriangle(ax, currentY + 4, ax + 2, currentY + 1, ax + 4, currentY + 4, tft.color565(0, 255, 0));
@@ -443,14 +480,13 @@ void fetchAndDrawPlanes() {
           int dbFlags = plane["dbFlags"] | 0;
           ac.is_mil = (dbFlags & 1) != 0;
 
-          // Načítanie letísk len ak naozaj existujú
           const char* orig = plane["orig_iata"] | "";
           const char* dest = plane["dest_iata"] | "";
 
           if (strlen(orig) > 0 && strlen(dest) > 0) {
             snprintf(ac.route, sizeof(ac.route), "%s-%s", orig, dest);
           } else {
-            ac.route[0] = '\0'; // Skryje neznámu trasu bez otáznikov
+            ac.route[0] = '\0';
           }
 
           const char* fl = plane["flight"] | "";
@@ -499,6 +535,7 @@ void drawOverlay(bool showTime) {
 
   tft.setFont(&fonts::Font0);
 
+  // Hranice SR
   for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
     int sx1 = (int)mapXToScreenX(lonToX(SK_BORDER[i][0]));
     int sy1 = (int)mapYToScreenY(latToY(SK_BORDER[i][1]));
@@ -507,9 +544,13 @@ void drawOverlay(bool showTime) {
     tft.drawLine(sx1, sy1, sx2, sy2, TFT_CYAN);
   }
 
+  // DYNAMICKÉ FILTROVANIE MIEST PODĽA ZOOMU
   tft.setTextDatum(textdatum_t::middle_center);
   tft.setTextColor(TFT_ORANGE, TFT_BLACK);
   for (size_t i = 0; i < CITY_COUNT; i++) {
+    // Pri vyššom zoome (>=100km) kreslíme len krajské mestá (isMajor == true)
+    if (currentRadiusKm >= 100.0f && !CITIES[i].isMajor) continue;
+
     int sx = (int)mapXToScreenX(lonToX(CITIES[i].lon));
     int sy = (int)mapYToScreenY(latToY(CITIES[i].lat));
     if (sx >= 10 && sx <= TFT_W - 10 && sy >= 10 && sy <= TFT_H - 10) {
@@ -519,6 +560,7 @@ void drawOverlay(bool showTime) {
     }
   }
 
+  // Kruhy a zameriavač
   tft.drawCircle(cx, cy, TFT_W / 2 - 2, TFT_DARKGREY);
   tft.drawCircle(cx, cy, TFT_W / 4, TFT_DARKGREY);
   tft.drawLine(cx - 6, cy, cx + 6, cy, TFT_WHITE);
@@ -600,10 +642,12 @@ void setup() {
 
   pinMode(ZOOM_BUTTON_PIN, INPUT_PULLUP);
   
+  // Načítanie uložených NVS hodnôt
   prefs.begin("radar", true);
   centerLat = prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT));
   centerLon = prefs.getFloat("lon", atof(DEFAULT_CENTER_LON));
   currentRadiusKm = prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT));
+  timeOffsetHours = prefs.getInt("offset", DEFAULT_TIME_OFFSET_HOURS);
   prefs.end();
 
   checkResetButtonAtBoot();
@@ -612,7 +656,7 @@ void setup() {
   
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
 
-  // Vykreslenie radarového UI okamžite po pripojení
+  // Vykreslenie UI okamžite po pripojení
   tft.fillScreen(TFT_BLACK);
   drawOverlay(false);
   tft.setFont(&fonts::Font0);
