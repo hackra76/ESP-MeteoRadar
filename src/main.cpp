@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
  * @brief ESP32-C3 MeteoRadar + ADSB Plane Radar (Slovakia)
- * @details Obsahuje obnovené NVS ukladanie, WiFiManager parametre (vrátane nastavenia intervalu karuselu), 
- *          dynamické filtrovanie miest pri počasí a zelené radarové pozadie s Edge Dots pre lietadlá.
+ * @details Obsahuje NVS ukladanie, WiFiManager parametre, zelenú mriežku,
+ *          Edge Dots a HARDVÉROVÉ PRERUŠENIE (ISR) pre okamžitú reakciu tlačidla.
  */
 
 #include <Arduino.h>
@@ -47,7 +47,6 @@ static const float SK_BORDER[][2] = {
 };
 static constexpr size_t SK_BORDER_COUNT = sizeof(SK_BORDER) / sizeof(SK_BORDER[0]);
 
-// Štruktúra miest s príznakom priority zobrazenia (isMajor)
 struct City { const char* name; float lat; float lon; bool isMajor; };
 static const City CITIES[] = {
   {"BA", 48.1486, 17.1077, true},  {"TT", 48.3775, 17.5883, false},
@@ -70,7 +69,7 @@ Preferences prefs;
 float centerLat = atof(DEFAULT_CENTER_LAT);
 float centerLon = atof(DEFAULT_CENTER_LON);
 int timeOffsetHours = DEFAULT_TIME_OFFSET_HOURS;
-int carouselIntervalSec = 30; // Predvolený interval prepínania v sekundách
+int carouselIntervalSec = 30;
 uint32_t carouselIntervalMs = 30000;
 
 static const float ZOOM_LEVELS_KM[] = {10.0f, 25.0f, 50.0f, 100.0f, 250.0f};
@@ -78,13 +77,10 @@ static constexpr int ZOOM_LEVEL_COUNT = sizeof(ZOOM_LEVELS_KM) / sizeof(ZOOM_LEV
 int zoomIndex = 1;
 float currentRadiusKm = atof(DEFAULT_RADIUS_KM_TEXT);
 
-// Button variables
-bool lastButtonReading = HIGH;
-bool stableButtonState = HIGH;
-uint32_t lastButtonChangeMs = 0;
-uint32_t buttonPressStartMs = 0;
-bool longPressHandled = false;
-static constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
+// === INTERRUPT & BUTTON VARIABLES ===
+volatile bool zoomRequested = false;
+volatile uint32_t lastBtnInterruptMs = 0;
+static constexpr uint32_t DEBOUNCE_DELAY_MS = 200; // Ochrana pred zákmity tlačidla
 
 // === CAROUSEL STATE MACHINE VARIABLES ===
 enum AppMode { MODE_WEATHER, MODE_PLANES };
@@ -116,6 +112,17 @@ void fetchAndDrawPlanes();
 void drawWeatherOverlay(bool showTime);
 void drawPlaneRadarGrid();
 
+
+// ==========================================
+// HARDWARE INTERRUPT SERVICE ROUTINE (ISR)
+// ==========================================
+void IRAM_ATTR buttonISR() {
+  uint32_t now = millis();
+  if (now - lastBtnInterruptMs > DEBOUNCE_DELAY_MS) {
+    zoomRequested = true;
+    lastBtnInterruptMs = now;
+  }
+}
 
 // ==========================================
 // 2. GEOGRAPHIC & PROJECTION MAPPING HELPERS
@@ -178,6 +185,7 @@ String getRadarTimeText(const String& filename) {
 }
 
 void resetSettingsAndRestart() {
+  detachInterrupt(digitalPinToInterrupt(ZOOM_BUTTON_PIN));
   showStatus("Reset nastavenia...");
   WiFiManager wm; wm.resetSettings();
   prefs.begin("radar", false); prefs.clear(); prefs.end();
@@ -194,48 +202,39 @@ void checkResetButtonAtBoot() {
   }
 }
 
-void nextZoomLevel() {
+void processZoomRequest() {
+  if (!zoomRequested) return;
+  zoomRequested = false;
+
+  // Ak je tlačidlo podržané pri bežnom chode dlhšie ako 3 sekundy -> Reset
+  if (digitalRead(ZOOM_BUTTON_PIN) == LOW) {
+    uint32_t holdStart = millis();
+    while (digitalRead(ZOOM_BUTTON_PIN) == LOW) {
+      if (millis() - holdStart >= RESET_HOLD_MS) {
+        resetSettingsAndRestart();
+        return;
+      }
+      delay(10);
+    }
+  }
+
+  // Prepneme zoom úroveň
   zoomIndex = (zoomIndex + 1) % ZOOM_LEVEL_COUNT;
   currentRadiusKm = ZOOM_LEVELS_KM[zoomIndex];
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
   
+  prefs.begin("radar", false);
+  prefs.putFloat("radius", currentRadiusKm);
+  prefs.end();
+
   if (currentMode == MODE_WEATHER) renderRadar();
   else fetchAndDrawPlanes();
-}
-
-void handleZoomButton() {
-  bool reading = digitalRead(ZOOM_BUTTON_PIN);
-  if (reading != lastButtonReading) {
-    lastButtonChangeMs = millis();
-    lastButtonReading = reading;
-  }
-  if ((millis() - lastButtonChangeMs) > BUTTON_DEBOUNCE_MS && reading != stableButtonState) {
-    stableButtonState = reading;
-    if (stableButtonState == LOW) {
-      buttonPressStartMs = millis();
-      longPressHandled = false;
-    } else {
-      if (!longPressHandled) {
-        nextZoomLevel();
-        prefs.begin("radar", false);
-        prefs.putFloat("radius", currentRadiusKm);
-        prefs.end();
-      }
-    }
-  }
-  if (stableButtonState == LOW && !longPressHandled && buttonPressStartMs > 0) {
-    if (millis() - buttonPressStartMs >= RESET_HOLD_MS) {
-      longPressHandled = true;
-      resetSettingsAndRestart();
-    }
-  }
 }
 
 void connectWiFi() {
   WiFi.mode(WIFI_STA); delay(100);
   showStatus("ESP MeteoRadar v1.2\nPripajam WiFi...");
 
-  // Načítanie uložených hodnôt pre predvyplnenie
   prefs.begin("radar", true);
   String curLat = String(prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT)), 4);
   String curLon = String(prefs.getFloat("lon", atof(DEFAULT_CENTER_LON)), 4);
@@ -267,7 +266,6 @@ void connectWiFi() {
     return;
   }
 
-  // Uloženie nových hodnôt z portálu do NVS
   prefs.begin("radar", false);
   if (strlen(custom_lat.getValue()) > 0) {
     centerLat = atof(custom_lat.getValue());
@@ -287,7 +285,7 @@ void connectWiFi() {
   }
   if (strlen(custom_car.getValue()) > 0) {
     carouselIntervalSec = atoi(custom_car.getValue());
-    if (carouselIntervalSec < 5) carouselIntervalSec = 5; // Bezpečnostné minimum 5s
+    if (carouselIntervalSec < 5) carouselIntervalSec = 5;
     prefs.putInt("car_int", carouselIntervalSec);
   }
   prefs.end();
@@ -330,6 +328,7 @@ bool downloadLatestRadar() {
         WiFiClient* stream = http.getStreamPtr();
         uint8_t buf[512];
         while (http.connected()) {
+          processZoomRequest(); // Kontrola tlačidla aj počas čítania zo siete
           size_t avail = stream->available();
           if (avail) {
             size_t toRead = (avail < sizeof(buf)) ? avail : sizeof(buf);
@@ -490,7 +489,6 @@ void fetchAndDrawPlanes() {
         JsonArray acList = doc["ac"].as<JsonArray>();
         
         tft.fillScreen(TFT_BLACK);
-        
         drawPlaneRadarGrid();
 
         tft.setFont(&fonts::Font0);
@@ -695,7 +693,6 @@ bool renderRadar() {
 void setup() {
   Serial.begin(115200);
   tft.init(); tft.setRotation(0); tft.setBrightness(180); 
-  
   tft.setFont(&fonts::Font0);
 
   pinMode(ZOOM_BUTTON_PIN, INPUT_PULLUP);
@@ -714,6 +711,9 @@ void setup() {
   checkResetButtonAtBoot();
   SPIFFS.begin(true);
   connectWiFi();
+
+  // Aktivácia hardvérového prerušenia pre tlačidlo (spadajúca hrana -> FALLING)
+  attachInterrupt(digitalPinToInterrupt(ZOOM_BUTTON_PIN), buttonISR, FALLING);
   
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
 
@@ -735,12 +735,14 @@ void setup() {
 void loop() {
   uint32_t now = millis();
 
+  // Spracovanie požiadavky z hardvérového prerušenia
+  processZoomRequest();
+
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
     delay(1000);
   }
 
-  // Prepínanie režimov podľa nastaveného intervalu
   if (now - lastCarouselSwitchMs >= carouselIntervalMs) {
     lastCarouselSwitchMs = now;
     currentMode = (currentMode == MODE_WEATHER) ? MODE_PLANES : MODE_WEATHER;
@@ -767,6 +769,5 @@ void loop() {
     }
   }
   
-  handleZoomButton();
-  delay(20);
+  delay(10);
 }
