@@ -13,6 +13,8 @@ Pôvodný projekt (pre Česko): https://www.petanovo.cz/esp-meteoradar-od-letade
 </p>
 
 ---
+[![ESP32-C3 MeteoRadar & ADSB Plane Radar Demo](https://img.youtube.com/vi/1NHL9VXtsXE/0.jpg)](https://www.youtube.com/shorts/1NHL9VXtsXE)
+
 
 ## 🚀 Hlavné funkcie
 
