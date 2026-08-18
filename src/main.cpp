@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
  * @brief ESP32-C3 MeteoRadar + ADSB Plane Radar (Slovakia)
- * @details Obsahuje kompletne obnovené NVS ukladanie, WiFiManager parametre, 
- *          dynamické filtrovanie miest, bleskový štart a ADSB tracker.
+ * @details Obsahuje obnovené NVS ukladanie, WiFiManager parametre (vrátane nastavenia intervalu karuselu), 
+ *          dynamické filtrovanie miest pri počasí a zelené radarové pozadie s Edge Dots pre lietadlá.
  */
 
 #include <Arduino.h>
@@ -28,7 +28,7 @@ File pngFile;
 
 static const char* RADAR_FILE = "/radar.png";
 
-// Detailnejšia hranica SR (zahustený polygón)
+// Detailnejšia hranica SR (zahustený polygón pre režim Počasia)
 static const float SK_BORDER[][2] = {
   {16.96, 48.48}, {16.90, 48.38}, {16.85, 48.28}, {16.95, 48.21}, {17.06, 48.14},
   {17.11, 48.08}, {17.16, 48.02}, {17.40, 47.90}, {17.65, 47.78}, {17.87, 47.77},
@@ -70,6 +70,8 @@ Preferences prefs;
 float centerLat = atof(DEFAULT_CENTER_LAT);
 float centerLon = atof(DEFAULT_CENTER_LON);
 int timeOffsetHours = DEFAULT_TIME_OFFSET_HOURS;
+int carouselIntervalSec = 30; // Predvolený interval prepínania v sekundách
+uint32_t carouselIntervalMs = 30000;
 
 static const float ZOOM_LEVELS_KM[] = {10.0f, 25.0f, 50.0f, 100.0f, 250.0f};
 static constexpr int ZOOM_LEVEL_COUNT = sizeof(ZOOM_LEVELS_KM) / sizeof(ZOOM_LEVELS_KM[0]);
@@ -92,7 +94,6 @@ uint32_t lastWeatherUpdateMs = 0;
 uint32_t lastCarouselSwitchMs = 0;
 uint32_t lastPlaneFetchMs = 0;
 
-static constexpr uint32_t CAROUSEL_INTERVAL_MS = 30000;
 static constexpr uint32_t PLANE_FETCH_INTERVAL_MS = 10000;
 
 struct AircraftData {
@@ -112,7 +113,8 @@ struct AircraftData {
 // Forward Declarations
 bool renderRadar();
 void fetchAndDrawPlanes();
-void drawOverlay(bool showTime);
+void drawWeatherOverlay(bool showTime);
+void drawPlaneRadarGrid();
 
 
 // ==========================================
@@ -233,18 +235,20 @@ void connectWiFi() {
   WiFi.mode(WIFI_STA); delay(100);
   showStatus("ESP MeteoRadar v1.2\nPripajam WiFi...");
 
-  // Obnovenie načítania z Preferences pre predvyplnenie
+  // Načítanie uložených hodnôt pre predvyplnenie
   prefs.begin("radar", true);
   String curLat = String(prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT)), 4);
   String curLon = String(prefs.getFloat("lon", atof(DEFAULT_CENTER_LON)), 4);
   String curRad = String((int)prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT)));
   String curOff = String(prefs.getInt("offset", DEFAULT_TIME_OFFSET_HOURS));
+  String curCar = String(prefs.getInt("car_int", 30));
   prefs.end();
 
   WiFiManagerParameter custom_lat("lat", "Zemepisna sirka (Lat)", curLat.c_str(), 10);
   WiFiManagerParameter custom_lon("lon", "Zemepisna dlzka (Lon)", curLon.c_str(), 10);
   WiFiManagerParameter custom_rad("radius", "Predvoleny rozsah (km)", curRad.c_str(), 5);
   WiFiManagerParameter custom_off("offset", "Casovy offset (hodiny)", curOff.c_str(), 3);
+  WiFiManagerParameter custom_car("car_int", "Interval karuselu (sekundy)", curCar.c_str(), 4);
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(300);
@@ -256,13 +260,14 @@ void connectWiFi() {
   wm.addParameter(&custom_lon);
   wm.addParameter(&custom_rad);
   wm.addParameter(&custom_off);
+  wm.addParameter(&custom_car);
 
   if (!wm.autoConnect("ESPMeteoRadar")) {
     showStatus("WiFi chyba\nPodrz tlacidlo 3s\npre reset");
     return;
   }
 
-  // Uloženie nových hodnôt z portálu
+  // Uloženie nových hodnôt z portálu do NVS
   prefs.begin("radar", false);
   if (strlen(custom_lat.getValue()) > 0) {
     centerLat = atof(custom_lat.getValue());
@@ -280,7 +285,14 @@ void connectWiFi() {
     timeOffsetHours = atoi(custom_off.getValue());
     prefs.putInt("offset", timeOffsetHours);
   }
+  if (strlen(custom_car.getValue()) > 0) {
+    carouselIntervalSec = atoi(custom_car.getValue());
+    if (carouselIntervalSec < 5) carouselIntervalSec = 5; // Bezpečnostné minimum 5s
+    prefs.putInt("car_int", carouselIntervalSec);
+  }
   prefs.end();
+
+  carouselIntervalMs = (uint32_t)carouselIntervalSec * 1000;
 }
 
 
@@ -422,6 +434,23 @@ void drawAircraftTag(int x, int y, const AircraftData& ac) {
   }
 }
 
+void drawEdgeIndicator(int mapX, int mapY, bool is_mil) {
+  int cx = TFT_W / 2;
+  int cy = TFT_H / 2;
+
+  float dx = (float)(mapX - crop.x1) * TFT_W / crop.w() - cx;
+  float dy = (float)(mapY - crop.y1) * TFT_H / crop.h() - cy;
+
+  float angle = atan2f(dy, dx);
+  int edgeX = cx + (int)(roundf(cosf(angle) * 112.0f));
+  int edgeY = cy + (int)(roundf(sinf(angle) * 112.0f));
+
+  uint16_t dotColor = is_mil ? tft.color565(255, 0, 0) : tft.color565(255, 140, 0);
+
+  tft.fillCircle(edgeX, edgeY, 3, dotColor);
+  tft.drawCircle(edgeX, edgeY, 3, TFT_BLACK);
+}
+
 void fetchAndDrawPlanes() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -461,12 +490,16 @@ void fetchAndDrawPlanes() {
         JsonArray acList = doc["ac"].as<JsonArray>();
         
         tft.fillScreen(TFT_BLACK);
-        drawOverlay(false);
+        
+        drawPlaneRadarGrid();
 
         tft.setFont(&fonts::Font0);
         tft.setTextDatum(textdatum_t::bottom_center);
         tft.setTextColor(tft.color565(0, 255, 0), TFT_BLACK);
         tft.drawString("Lietadiel: " + String(acList.size()), TFT_W / 2, TFT_H - 4);
+
+        int cx = TFT_W / 2;
+        int cy = TFT_H / 2;
 
         for (JsonObject plane : acList) {
           AircraftData ac;
@@ -509,12 +542,15 @@ void fetchAndDrawPlanes() {
           int sx = (int)mapXToScreenX(mapX);
           int sy = (int)mapYToScreenY(mapY);
 
-          if (sx >= 0 && sx < TFT_W && sy >= 0 && sy < TFT_H) {
+          float distFromCenter = sqrtf((float)((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)));
+
+          if (distFromCenter <= 112.0f) {
             drawAircraftSymbol(sx, sy, ac.nose_deg, ac.track, ac.gs_knots, ac.is_mil);
-            
             if (currentRadiusKm <= 50) {
               drawAircraftTag(sx, sy, ac);
             }
+          } else {
+            drawEdgeIndicator(mapX, mapY, ac.is_mil);
           }
         }
       }
@@ -529,13 +565,38 @@ void fetchAndDrawPlanes() {
 // GRAPHIC OVERLAYS & RENDERING
 // ==========================================
 
-void drawOverlay(bool showTime) {
+void drawPlaneRadarGrid() {
+  int cx = TFT_W / 2;
+  int cy = TFT_H / 2;
+  uint16_t gridColor = tft.color565(0, 200, 0);     
+  uint16_t dimGridColor = tft.color565(0, 80, 0);   
+
+  tft.drawLine(cx - 110, cy, cx + 110, cy, dimGridColor);
+  tft.drawLine(cx, cy - 110, cx, cy + 110, dimGridColor);
+
+  tft.drawCircle(cx, cy, 35, gridColor);
+  tft.drawCircle(cx, cy, 70, gridColor);
+  tft.drawCircle(cx, cy, 105, gridColor);
+
+  tft.setFont(&fonts::Font0);
+  tft.setTextDatum(textdatum_t::middle_center);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("N", cx, 8);
+  tft.drawString("S", cx, TFT_H - 8);
+  tft.drawString("W", 8, cy);
+  tft.drawString("E", TFT_W - 8, cy);
+
+  tft.setTextDatum(textdatum_t::middle_right);
+  tft.setTextColor(tft.color565(0, 255, 0), TFT_BLACK);
+  tft.drawString(String((int)currentRadiusKm) + "km", TFT_W - 16, cy);
+}
+
+void drawWeatherOverlay(bool showTime) {
   int cx = TFT_W / 2;
   int cy = TFT_H / 2;
 
   tft.setFont(&fonts::Font0);
 
-  // Hranice SR
   for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
     int sx1 = (int)mapXToScreenX(lonToX(SK_BORDER[i][0]));
     int sy1 = (int)mapYToScreenY(latToY(SK_BORDER[i][1]));
@@ -544,11 +605,9 @@ void drawOverlay(bool showTime) {
     tft.drawLine(sx1, sy1, sx2, sy2, TFT_CYAN);
   }
 
-  // DYNAMICKÉ FILTROVANIE MIEST PODĽA ZOOMU
   tft.setTextDatum(textdatum_t::middle_center);
   tft.setTextColor(TFT_ORANGE, TFT_BLACK);
   for (size_t i = 0; i < CITY_COUNT; i++) {
-    // Pri vyššom zoome (>=100km) kreslíme len krajské mestá (isMajor == true)
     if (currentRadiusKm >= 100.0f && !CITIES[i].isMajor) continue;
 
     int sx = (int)mapXToScreenX(lonToX(CITIES[i].lon));
@@ -560,7 +619,6 @@ void drawOverlay(bool showTime) {
     }
   }
 
-  // Kruhy a zameriavač
   tft.drawCircle(cx, cy, TFT_W / 2 - 2, TFT_DARKGREY);
   tft.drawCircle(cx, cy, TFT_W / 4, TFT_DARKGREY);
   tft.drawLine(cx - 6, cy, cx + 6, cy, TFT_WHITE);
@@ -626,7 +684,7 @@ bool renderRadar() {
     png.decode(nullptr, 0);
     png.close();
   }
-  drawOverlay(true);
+  drawWeatherOverlay(true);
   return true;
 }
 
@@ -642,13 +700,16 @@ void setup() {
 
   pinMode(ZOOM_BUTTON_PIN, INPUT_PULLUP);
   
-  // Načítanie uložených NVS hodnôt
   prefs.begin("radar", true);
   centerLat = prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT));
   centerLon = prefs.getFloat("lon", atof(DEFAULT_CENTER_LON));
   currentRadiusKm = prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT));
   timeOffsetHours = prefs.getInt("offset", DEFAULT_TIME_OFFSET_HOURS);
+  carouselIntervalSec = prefs.getInt("car_int", 30);
   prefs.end();
+
+  if (carouselIntervalSec < 5) carouselIntervalSec = 5;
+  carouselIntervalMs = (uint32_t)carouselIntervalSec * 1000;
 
   checkResetButtonAtBoot();
   SPIFFS.begin(true);
@@ -656,9 +717,8 @@ void setup() {
   
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
 
-  // Vykreslenie UI okamžite po pripojení
   tft.fillScreen(TFT_BLACK);
-  drawOverlay(false);
+  drawWeatherOverlay(false);
   tft.setFont(&fonts::Font0);
   tft.setTextDatum(textdatum_t::bottom_center);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -680,7 +740,8 @@ void loop() {
     delay(1000);
   }
 
-  if (now - lastCarouselSwitchMs >= CAROUSEL_INTERVAL_MS) {
+  // Prepínanie režimov podľa nastaveného intervalu
+  if (now - lastCarouselSwitchMs >= carouselIntervalMs) {
     lastCarouselSwitchMs = now;
     currentMode = (currentMode == MODE_WEATHER) ? MODE_PLANES : MODE_WEATHER;
     
