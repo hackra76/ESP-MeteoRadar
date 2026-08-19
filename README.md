@@ -4,13 +4,14 @@
   <img src="https://img.shields.io/badge/Platform-ESP32--C3%20SuperMini-blue?style=for-the-badge&logo=espressif" alt="ESP32-C3">
   <img src="https://img.shields.io/badge/Display-GC9A01%20240x240%20SPI-orange?style=for-the-badge" alt="GC9A01">
   <img src="https://img.shields.io/badge/Web%20Dashboard-Port%2080-purple?style=for-the-badge&logo=html5" alt="Web Dashboard">
+  <img src="https://img.shields.io/badge/Release-v1.5.0-success?style=for-the-badge" alt="Release v1.5.0">
   <img src="https://img.shields.io/badge/Framework-PlatformIO%20%2F%20Arduino-brightgreen?style=for-the-badge&logo=platformio" alt="PlatformIO">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
   <img src="https://img.shields.io/badge/Region-Slovakia%20%28SHM%C3%9A%29-red?style=for-the-badge" alt="Region Slovakia">
 </p>
 
 <p align="center">
-  <b>Kompaktný stolný radar pre okrúhly 1.28″ LCD displej spájajúci zrážkový meteoradar SHMÚ a živé sledovanie lietadiel (ADS-B) s webovým panelom a plynulou animáciou.</b>
+  <b>Kompaktný stolný radar pre okrúhly 1.28″ LCD displej spájajúci zrážkový meteoradar SHMÚ a živé sledovanie lietadiel (ADS-B) s webovým panelom, hardvérovou telemetriou a plynulou animáciou bez blikania.</b>
 </p>
 
 <p align="center">
@@ -21,7 +22,7 @@
 
 ## 📖 Obsah
 - [Prehľad projektu](#-prehľad-projektu)
-- [Hlavné funkcie (v1.4.0)](#-hlavné-funkcie)
+- [Hlavné funkcie (v1.5.0)](#-hlavné-funkcie)
 - [Použitý hardvér](#-použitý-hardvér)
 - [Schéma zapojenia](#-schéma-zapojenia)
 - [Ovládanie a funkcie tlačidla](#-ovládanie-a-funkcie-tlačidla)
@@ -49,7 +50,7 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 
 ---
 
-## 🚀 Hlavné funkcie
+## 🚀 Hlavné funkcie (v1.5.0)
 
 * 🔄 **Automatický Karusel:** Plynulé striedanie režimov počasia a lietadiel v nastaviteľnom intervale (5 až 300 sekúnd).
 * 🔘 **Multi-Click Tlačidlo:**
@@ -57,7 +58,8 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
   * **2x Klik (Dvojklik):** Okamžité manuálne prepnutie medzi počasím a lietadlami.
   * **Dlhé podržanie (3s):** Továrenský reset WiFi a NVS pamäte.
 * ✈️ **Pokročilý Letecký radar (ADS-B) s plynulou extrapoláciou (Dead Reckoning):**
-  * **Plynulý pohyb bez blikania (Double Buffering):** Využitie 240×240 pixelového off-screen canvasu v RAM pre okamžitý prenos hotového obrazu cez SPI — pohyb lietadiel je dokonale hladký s 0 % preblikávaním.
+  * **Dynamický Double Buffering (0 % blikanie):** Inteligentné riadenie životného cyklu 240×240 pixelového off-screen canvasu — vykresľovanie prebieha na pozadí v RAM a na displej sa posiela hotový snímok naraz, čím je eliminované akékoľvek blikanie.
+  * **Dynamická izolácia pamäte:** Počas sťahovania HTTPS dát sa buffer dočasne uvoľní, čím má systém k dispozícii **cez 160 KB voľnej RAM** pre bezpečný a stabilný TLS handshake.
   * **Plynulý pohyb lietadiel:** Pozície lietadiel sa na obrazovke interpolujú a pohybujú každú sekundu plynulo podľa kurzu a rýchlosti.
   * **Automatické zisťovanie letových trás:** Prepojenie volacieho znaku s databázou letových plánov (VRS standing-data) zobrazuje trasu letu (`VIE>AMS`).
   * **Kruhová vyrovnávacia pamäť (Route Cache):** Ukladá 48 letových trás do RAM pre okamžité vykreslenie a minimálny dátový prenos.
@@ -68,11 +70,17 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
   * **Edge Dots:** Obvodové body na okraji displeja indikujúce lietadlá nachádzajúce sa tesne za hranicou aktuálneho priblíženia.
   * **Vojenské lety:** Automatické zvýraznenie vojenských transpondérov červenou farbou.
 * 🌧️ **SHMÚ Meteoradar (Slovensko):**
-  * Sťahovanie najnovšieho zrážkového PNG kompozitu (`cmax.kruh`) zo serverov SHMÚ.
+  * Sťahovanie najnovšieho zrážkového PNG kompozitu (`cmax.kruh`) zo serverov SHMÚ cez zabezpečené HTTPS.
   * Zobrazenie času zosnímania radaru s automatickým offsetom časového pásma.
   * Zameriavací kríž a diaľkové kružnice.
 * 🌙 **Nočný režim (Auto-Dimming):** Automatické stlmenie jasu displeja počas nočných hodín (22:00 – 06:00) podľa času z NTP.
-* 🌐 **Lokálny Web Dashboard:** Vstavaný web server na porte 80 s dark-mode dizajnom, živým zoznamom lietadiel v dosahu a diaľkovým ovládaním.
+* 🌐 **Lokálny Web Dashboard s telemetriou hardvéru:**
+  * Vstavaný web server na porte 80 s responzívnym dark-mode dizajnom.
+  * **Hardvérová telemetria:** Frekvencia CPU (MHz), interná teplota čipu (°C), voľná a celková RAM (KB / %), veľkosť Flash pamäte, minimálna zaznamenaná RAM a celkový čas behu (Uptime).
+  * **Živá tabuľka lietadiel:** Zoznam všetkých zachytených lietadiel v reálnom čase s trasou, rýchlosťou, výškou a koordinátmi.
+  * **Nastavenie GPS polohy:** 1-kliknutím zistenie polohy cez GPS mobilu/PC alebo automatický sieťový IP fallback.
+  * **Zmena Wi-Fi siete:** Skenovanie sietí v okolí s indikátorom sily signálu (RSSI) a pripojenie k novej Wi-Fi.
+  * **Asynchrónne AJAX ukladanie:** Okamžité uloženie bez nechceného znovunačítania stránky s okamžitou aktualizáciou radaru.
 * 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá (BA, TT, NR, TN, ZA, BB, PO, KE, BJ, PP, MI, LC) s dynamickým filtrovaním podľa zoomu.
 
 ---
