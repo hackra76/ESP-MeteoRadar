@@ -467,6 +467,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       --accent: #58a6ff;
       --accent-green: #3fb950;
       --accent-magenta: #d2a8ff;
+      --accent-orange: #f0883e;
       --text: #c9d1d9;
       --text-bright: #f0f6fc;
     }
@@ -482,6 +483,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
     .stat-box { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; border: 1px solid var(--border); text-align: center; }
     .stat-box .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
     .stat-box .val { font-size: 1.15rem; font-weight: bold; color: var(--accent); margin-top: 4px; }
+    .stat-box .sub { font-size: 0.75rem; color: #8b949e; margin-top: 3px; }
     .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     button, input[type="submit"] { background: #21262d; color: var(--text-bright); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
     button:hover, input[type="submit"]:hover { background: #30363d; border-color: #8b949e; }
@@ -497,6 +499,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
     input[type="text"], input[type="number"], input[type="password"], select { width: 100%; background: #0d1117; border: 1px solid var(--border); padding: 8px; border-radius: 6px; color: var(--text-bright); font-size: 0.9rem; }
     select { cursor: pointer; }
     .badge { padding: 3px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; background: rgba(56, 139, 253, 0.15); color: var(--accent); }
+    .badge-green { background: rgba(63, 185, 80, 0.15); color: var(--accent-green); }
   </style>
 </head>
 <body>
@@ -506,16 +509,45 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       <p>ESP32-C3 SuperMini • GC9A01 240x240 LCD</p>
     </header>
 
+    <!-- KARTA 1: AKTUÁLNY STAV RADARU -->
     <div class="card">
-      <h2>📊 Aktuálny stav <span class="badge" id="live-badge">ŽIVÉ DÁTA</span></h2>
+      <h2>📊 Aktuálny stav radaru <span class="badge badge-green" id="live-badge">ŽIVÉ DÁTA</span></h2>
       <div class="grid-stats">
-        <div class="stat-box"><div class="label">Režim</div><div class="val" id="mode-val">--</div></div>
-        <div class="stat-box"><div class="label">Zoom</div><div class="val" id="zoom-val">-- km</div></div>
-        <div class="stat-box"><div class="label">Lietadlá v dosahu</div><div class="val" id="planes-count">0</div></div>
-        <div class="stat-box"><div class="label">WiFi Signál</div><div class="val" id="wifi-rssi">-- dBm</div></div>
+        <div class="stat-box"><div class="label">Režim</div><div class="val" id="mode-val">--</div><div class="sub" id="car-sub">Karusel: ZAP</div></div>
+        <div class="stat-box"><div class="label">Zoom</div><div class="val" id="zoom-val">-- km</div><div class="sub">Rozsah radaru</div></div>
+        <div class="stat-box"><div class="label">Lietadlá</div><div class="val" id="planes-count">0</div><div class="sub">V okruhu</div></div>
+        <div class="stat-box"><div class="label">WiFi Signál</div><div class="val" id="wifi-rssi">-- dBm</div><div class="sub" id="wifi-pct">Kvalita: -- %</div></div>
       </div>
     </div>
 
+    <!-- KARTA 2: STAV SYSTÉMU & HARDVÉRU -->
+    <div class="card">
+      <h2>🖥️ Systém & Stav hardvéru</h2>
+      <div class="grid-stats">
+        <div class="stat-box">
+          <div class="label">Procesor (CPU)</div>
+          <div class="val" id="sys-cpu">160 MHz</div>
+          <div class="sub" id="sys-temp">Teplota: -- °C</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Voľná RAM</div>
+          <div class="val" id="sys-ram">-- KB</div>
+          <div class="sub" id="sys-ram-sub">z 320 KB</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Flash Pamäť</div>
+          <div class="val" id="sys-flash">4 MB</div>
+          <div class="sub" id="sys-heap-min">Min RAM: -- KB</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Doba behu</div>
+          <div class="val" id="sys-uptime">00:00:00</div>
+          <div class="sub" id="sys-ip">IP: --</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KARTA 3: RÝCHLE OVLÁDANIE -->
     <div class="card">
       <h2>🎮 Rýchle ovládanie radaru</h2>
       <label>Zmena mierky (Zoom):</label>
@@ -534,6 +566,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       </div>
     </div>
 
+    <!-- KARTA 4: TABUĽKA LIETADIEL -->
     <div class="card">
       <h2>✈️ Zoznam lietadiel v dosahu radaru</h2>
       <div style="overflow-x: auto;">
@@ -548,11 +581,37 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       </div>
     </div>
 
+    <!-- KARTA 5: NASTAVENIA POLOHY & RADARU -->
     <div class="card">
       <h2>📍 Nastavenia polohy a radaru</h2>
+      
+      <div style="margin-bottom: 10px;">
+        <label>Rýchly výber slovenského mesta:</label>
+        <select onchange="onCityPreset(this)">
+          <option value="">-- Zvoľte mesto pre automatické vyplnenie --</option>
+          <option value="48.1486,17.1077">Bratislava (48.1486, 17.1077)</option>
+          <option value="48.7164,21.2611">Košice (48.7164, 21.2611)</option>
+          <option value="48.9984,21.2393">Prešov (48.9984, 21.2393)</option>
+          <option value="49.2231,18.7397">Žilina (49.2231, 18.7397)</option>
+          <option value="48.7363,19.1462">Banská Bystrica (48.7363, 19.1462)</option>
+          <option value="48.3061,18.0864">Nitra (48.3061, 18.0864)</option>
+          <option value="48.3775,17.5883">Trnava (48.3775, 17.5883)</option>
+          <option value="48.8945,18.0444">Trenčín (48.8945, 18.0444)</option>
+          <option value="49.0595,20.2978">Poprad (49.0595, 20.2978)</option>
+          <option value="49.2918,21.2727">Bardejov (49.2918, 21.2727)</option>
+          <option value="48.7547,21.9195">Michalovce (48.7547, 21.9195)</option>
+          <option value="48.6690,19.1230">Zvolen (48.6690, 19.1230)</option>
+          <option value="48.3294,19.6648">Lučenec (48.3294, 19.6648)</option>
+          <option value="49.0806,19.3004">Ružomberok (49.0806, 19.3004)</option>
+          <option value="49.0645,18.9228">Martin (49.0645, 18.9228)</option>
+          <option value="48.7712,18.6253">Prievidza (48.7712, 18.6253)</option>
+        </select>
+      </div>
+
       <button type="button" onclick="useMyLocation()" id="btn-gps" style="background:#1f6feb; border-color:#58a6ff; width:100%; margin-bottom:12px; font-weight:600;">
-        📍 Nastaviť polohu podľa GPS prehliadača
+        📍 Zistiť moju polohu (GPS / Sieťová IP)
       </button>
+
       <form action="/api/save" method="POST">
         <div class="form-group">
           <div><label>Zemepisná šírka (Lat):</label><input type="text" name="lat" id="inp-lat" required></div>
@@ -569,6 +628,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       </form>
     </div>
 
+    <!-- KARTA 6: ZMENA WI-FI -->
     <div class="card">
       <h2>📶 Zmena Wi-Fi siete <button type="button" onclick="scanWifi()" id="btn-scan" style="font-size:0.8rem; padding:4px 10px;">🔍 Vyhľadať siete</button></h2>
       <form onsubmit="changeWifi(event)">
@@ -590,15 +650,44 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
   </div>
 
   <script>
+    function formatUptime(sec) {
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+      return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function rssiToPct(rssi) {
+      if (rssi <= -100) return 0;
+      if (rssi >= -50) return 100;
+      return 2 * (rssi + 100);
+    }
+
     async function loadData() {
       try {
         const res = await fetch('/api/status');
         const d = await res.json();
         
+        // Stav radaru
         document.getElementById('mode-val').innerText = d.mode === 0 ? '🌦️ Počasie' : '✈️ Lietadlá';
+        document.getElementById('car-sub').innerText = d.car_en ? 'Karusel: ZAP (' + d.car_int + 's)' : 'Karusel: VYP';
         document.getElementById('zoom-val').innerText = d.radius + ' km';
         document.getElementById('planes-count').innerText = d.planes ? d.planes.length : 0;
         document.getElementById('wifi-rssi').innerText = d.rssi + ' dBm';
+        document.getElementById('wifi-pct').innerText = 'Kvalita: ' + rssiToPct(d.rssi) + ' % (' + (d.ssid || '') + ')';
+
+        // Stav systému & Hardvér
+        document.getElementById('sys-cpu').innerText = (d.cpu_mhz || 160) + ' MHz';
+        document.getElementById('sys-temp').innerText = 'Teplota: ' + (d.temp ? d.temp.toFixed(1) : '--') + ' °C';
+        document.getElementById('sys-ram').innerText = d.heap_free + ' KB';
+        const ramPct = Math.round((d.heap_free / (d.heap_total || 320)) * 100);
+        document.getElementById('sys-ram-sub').innerText = 'Voľných ' + ramPct + ' % (z ' + (d.heap_total || 320) + ' KB)';
+        document.getElementById('sys-flash').innerText = (d.flash_size || 4) + ' MB Flash';
+        document.getElementById('sys-heap-min').innerText = 'Min RAM: ' + (d.heap_min || d.heap_free) + ' KB';
+        document.getElementById('sys-uptime').innerText = formatUptime(d.uptime || 0);
+        document.getElementById('sys-ip').innerText = 'IP: ' + (d.ip || '');
 
         // Zoom button active state
         for (let i = 0; i < 5; i++) {
@@ -610,7 +699,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
         document.getElementById('mbtn-car').innerText = d.car_en ? '🔄 Karusel: ZAP' : '⏸️ Karusel: VYP';
 
         // Form fields (only update if not currently focused)
-        if (document.activeElement.tagName !== 'INPUT') {
+        if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
           document.getElementById('inp-lat').value = d.lat;
           document.getElementById('inp-lon').value = d.lon;
           document.getElementById('inp-car').value = d.car_int;
@@ -652,29 +741,67 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       }
     }
 
-    function useMyLocation() {
-      if (!navigator.geolocation) {
-        alert('Váš prehliadač nepodporuje zisťovanie GPS polohy.');
-        return;
-      }
+    function onCityPreset(sel) {
+      if (!sel.value) return;
+      const parts = sel.value.split(',');
+      document.getElementById('inp-lat').value = parseFloat(parts[0]).toFixed(4);
+      document.getElementById('inp-lon').value = parseFloat(parts[1]).toFixed(4);
+    }
+
+    async function useMyLocation() {
       const btn = document.getElementById('btn-gps');
       const old = btn.innerText;
-      btn.innerText = '⏳ Zisťujem GPS polohu...';
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude.toFixed(4);
-          const lon = pos.coords.longitude.toFixed(4);
-          document.getElementById('inp-lat').value = lat;
-          document.getElementById('inp-lon').value = lon;
-          btn.innerText = '✅ Poloha nastavená: ' + lat + ', ' + lon;
-          setTimeout(() => { btn.innerText = old; }, 3500);
-        },
-        (err) => {
-          alert('Nepodarilo sa získať GPS polohu: ' + err.message + '\nUistite sa, že ste povolili prístup k polohe v prehliadači.');
-          btn.innerText = old;
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
+      btn.innerText = '⏳ Zisťujem polohu...';
+
+      // 1. Skúška natívnej geolokácie prehliadača (ak je povolená / HTTPS / localhost)
+      if (navigator.geolocation && window.isSecureContext) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            applyCoords(pos.coords.latitude, pos.coords.longitude, 'GPS');
+          },
+          async (err) => {
+            console.warn('GPS zlyhalo, prepínam na IP geolokáciu...', err);
+            await fetchIpLocation();
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      } else {
+        // 2. HTTP kontext (nie HTTPS) - automatický fallback na sieťovú IP geolokáciu
+        await fetchIpLocation();
+      }
+
+      async function fetchIpLocation() {
+        btn.innerText = '⏳ Zisťujem polohu cez sieť...';
+        try {
+          const res = await fetch('https://ipwho.is/');
+          const d = await res.json();
+          if (d && d.success && d.latitude && d.longitude) {
+            applyCoords(d.latitude, d.longitude, (d.city || 'IP'));
+            return;
+          }
+        } catch (e) {}
+
+        try {
+          const res2 = await fetch('https://freeipapi.com/api/json');
+          const d2 = await res2.json();
+          if (d2 && d2.latitude && d2.longitude) {
+            applyCoords(d2.latitude, d2.longitude, (d2.cityName || 'IP'));
+            return;
+          }
+        } catch (e2) {}
+
+        alert('Automatické zistenie polohy cez sieť zlyhalo. Vyberte prosím mesto zo zoznamu vyššie.');
+        btn.innerText = old;
+      }
+
+      function applyCoords(lat, lon, src) {
+        const fLat = parseFloat(lat).toFixed(4);
+        const fLon = parseFloat(lon).toFixed(4);
+        document.getElementById('inp-lat').value = fLat;
+        document.getElementById('inp-lon').value = fLon;
+        btn.innerText = '✅ Nastavené: ' + src + ' (' + fLat + ', ' + fLon + ')';
+        setTimeout(() => { btn.innerText = old; }, 4000);
+      }
     }
 
     async function scanWifi() {
@@ -751,7 +878,15 @@ void handleApiStatus() {
   doc["car_en"] = carouselEnabled;
   doc["offset"] = timeOffsetHours;
   doc["rssi"] = WiFi.RSSI();
-  doc["heap"] = ESP.getFreeHeap();
+  doc["ssid"] = WiFi.SSID();
+  doc["ip"] = WiFi.localIP().toString();
+  doc["mac"] = WiFi.macAddress();
+  doc["heap_free"] = (int)(ESP.getFreeHeap() / 1024);
+  doc["heap_total"] = (int)(ESP.getHeapSize() / 1024);
+  doc["heap_min"] = (int)(ESP.getMinFreeHeap() / 1024);
+  doc["flash_size"] = (int)(ESP.getFlashChipSize() / (1024 * 1024));
+  doc["cpu_mhz"] = getCpuFrequencyMhz();
+  doc["temp"] = roundf(temperatureRead() * 10.0f) / 10.0f;
   doc["uptime"] = millis() / 1000;
 
   JsonArray pArr = doc["planes"].to<JsonArray>();
