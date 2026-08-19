@@ -43,6 +43,8 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 2. **ADS-B Letecký radar:** V reálnom čase monitoruje leteckú prevádzku v okolí vašej polohy cez **ADS-B feed** vrátane vyhľadávania letových trás (**ODKIAĽ > KAM** napr. `VIE>AMS`, `BGY>WAW`).
 
 ---
+[![ESP32-C3 MeteoRadar & ADSB Plane Radar Demo](https://img.youtube.com/vi/1NHL9VXtsXE/0.jpg)](https://www.youtube.com/shorts/1NHL9VXtsXE)
+
 
 ## 🚀 Hlavné funkcie
 
