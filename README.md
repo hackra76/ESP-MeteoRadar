@@ -3,13 +3,14 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-ESP32--C3%20SuperMini-blue?style=for-the-badge&logo=espressif" alt="ESP32-C3">
   <img src="https://img.shields.io/badge/Display-GC9A01%20240x240%20SPI-orange?style=for-the-badge" alt="GC9A01">
+  <img src="https://img.shields.io/badge/Web%20Dashboard-Port%2080-purple?style=for-the-badge&logo=html5" alt="Web Dashboard">
   <img src="https://img.shields.io/badge/Framework-PlatformIO%20%2F%20Arduino-brightgreen?style=for-the-badge&logo=platformio" alt="PlatformIO">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
   <img src="https://img.shields.io/badge/Region-Slovakia%20%28SHM%C3%9A%29-red?style=for-the-badge" alt="Region Slovakia">
 </p>
 
 <p align="center">
-  <b>Kompaktný stolný radar pre okrúhly 1.28″ LCD displej spájajúci zrážkový meteoradar SHMÚ a živé sledovanie lietadiel (ADS-B).</b>
+  <b>Kompaktný stolný radar pre okrúhly 1.28″ LCD displej spájajúci zrážkový meteoradar SHMÚ a živé sledovanie lietadiel (ADS-B) s webovým panelom a plynulou animáciou.</b>
 </p>
 
 <p align="center">
@@ -20,10 +21,11 @@
 
 ## 📖 Obsah
 - [Prehľad projektu](#-prehľad-projektu)
-- [Hlavné funkcie](#-hlavné-funkcie)
+- [Hlavné funkcie (v1.4.0)](#-hlavné-funkcie)
 - [Použitý hardvér](#-použitý-hardvér)
 - [Schéma zapojenia](#-schéma-zapojenia)
 - [Ovládanie a funkcie tlačidla](#-ovládanie-a-funkcie-tlačidla)
+- [Lokálny Web Dashboard (Port 80)](#-lokálny-web-dashboard-port-80)
 - [Prvé spustenie a konfigurácia (WiFiManager)](#-prvé-spustenie-a-konfigurácia-wifimanager)
 - [Ako nahrať firmvér](#-ako-nahrať-firmvér)
   - [Metóda 1: Rýchly flash cez webový prehliadač (bez inštalácie)](#metóda-1-rýchly-flash-cez-webový-prehliadač-odporúčané)
@@ -40,32 +42,38 @@ Tento DIY projekt transformuje miniatúrnu vývojovú dosku **ESP32-C3 SuperMini
 
 Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 1. **Zrážkový meteoradar:** Sťahuje a resampluje oficiálne radarové kompozity zrážok zo **Slovenského hydrometeorologického ústavu (SHMÚ)** na vektorovej mape SR.
-2. **ADS-B Letecký radar:** V reálnom čase monitoruje leteckú prevádzku v okolí vašej polohy cez **ADS-B feed** vrátane vyhľadávania letových trás (**ODKIAĽ > KAM** napr. `VIE>AMS`, `BGY>WAW`).
+2. **ADS-B Letecký radar:** V reálnom čase monitoruje leteckú prevádzku v okolí vašej polohy cez **ADS-B feed** s plynulou animáciou letu a vyhľadávaním letových trás (**ODKIAĽ > KAM** napr. `VIE>AMS`, `BGY>WAW`).
 
 ---
 [![ESP32-C3 MeteoRadar & ADSB Plane Radar Demo](https://img.youtube.com/vi/1NHL9VXtsXE/0.jpg)](https://www.youtube.com/shorts/1NHL9VXtsXE)
 
+---
 
 ## 🚀 Hlavné funkcie
 
-* 🔄 **Automatický Karusel:** Plynulé striedanie režimov počasia a lietadiel v nastaviteľnom intervale (napr. každých 30 sekúnd).
-* 🌧️ **SHMÚ Meteoradar (Slovensko):**
-  * Sťahovanie najnovšieho zrážkového PNG kompozitu (`cmax.kruh`) zo serverov SHMÚ.
-  * Zobrazenie času zosnímania radaru s automatickým offsetom časového pásma.
-  * Zameriavací kríž a diaľkové kružnice.
-* ✈️ **Pokročilý Letecký radar (ADS-B):**
-  * Živé sledovanie lietadiel v reálnom čase z otvoreného feedu `adsb.fi`.
+* 🔄 **Automatický Karusel:** Plynulé striedanie režimov počasia a lietadiel v nastaviteľnom intervale (5 až 300 sekúnd).
+* 🔘 **Multi-Click Tlačidlo:**
+  * **1x Klik:** Zmena zoomu (10 $\rightarrow$ 25 $\rightarrow$ 50 $\rightarrow$ 100 $\rightarrow$ 250 km).
+  * **2x Klik (Dvojklik):** Okamžité manuálne prepnutie medzi počasím a lietadlami.
+  * **Dlhé podržanie (3s):** Továrenský reset WiFi a NVS pamäte.
+* ✈️ **Pokročilý Letecký radar (ADS-B) s plynulou extrapoláciou (Dead Reckoning):**
+  * **Plynulý pohyb bez blikania (Double Buffering):** Využitie 240×240 pixelového off-screen canvasu v RAM pre okamžitý prenos hotového obrazu cez SPI — pohyb lietadiel je dokonale hladký s 0 % preblikávaním.
+  * **Plynulý pohyb lietadiel:** Pozície lietadiel sa na obrazovke interpolujú a pohybujú každú sekundu plynulo podľa kurzu a rýchlosti.
   * **Automatické zisťovanie letových trás:** Prepojenie volacieho znaku s databázou letových plánov (VRS standing-data) zobrazuje trasu letu (`VIE>AMS`).
-  * **Kruhová vyrovnávacia pamäť (Route Cache):** Ukladá trasy do RAM pre okamžité vykreslenie a minimálny dátový prenos.
+  * **Kruhová vyrovnávacia pamäť (Route Cache):** Ukladá 48 letových trás do RAM pre okamžité vykreslenie a minimálny dátový prenos.
   * **Čitateľné 3-riadkové štítky:**
     * *Riadok 1:* Trasa letísk (fialová) alebo Callsign (biela / červená pre vojenské).
     * *Riadok 2:* Typ lietadla ICAO (svetlomodrá, napr. `A21N`) a rýchlosť v km/h (svetlozelená).
     * *Riadok 3:* Nadmorská výška v metroch (žltá) a farebná šípka stúpania / klesania.
   * **Edge Dots:** Obvodové body na okraji displeja indikujúce lietadlá nachádzajúce sa tesne za hranicou aktuálneho priblíženia.
   * **Vojenské lety:** Automatické zvýraznenie vojenských transpondérov červenou farbou.
-* 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a krajské/okresné mestá (BA, TT, NR, TN, ZA, BB, PO, KE, BJ, PP, MI, LC) s dynamickým filtrovaním podľa zoomu.
-* 🔍 **Prepínanie mierky jedným tlačidlom:** 5 úrovní priblíženia (**10 km**, **25 km**, **50 km**, **100 km** a **250 km**).
-* ⚙️ **Webový konfiguračný portál (WiFiManager):** Pohodlné nastavenie vlastných GPS súradníc, predvoleného zoomu a intervalu karuselu priamo z mobilu alebo PC bez nutnosti úpravy zdrojového kódu.
+* 🌧️ **SHMÚ Meteoradar (Slovensko):**
+  * Sťahovanie najnovšieho zrážkového PNG kompozitu (`cmax.kruh`) zo serverov SHMÚ.
+  * Zobrazenie času zosnímania radaru s automatickým offsetom časového pásma.
+  * Zameriavací kríž a diaľkové kružnice.
+* 🌙 **Nočný režim (Auto-Dimming):** Automatické stlmenie jasu displeja počas nočných hodín (22:00 – 06:00) podľa času z NTP.
+* 🌐 **Lokálny Web Dashboard:** Vstavaný web server na porte 80 s dark-mode dizajnom, živým zoznamom lietadiel v dosahu a diaľkovým ovládaním.
+* 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá (BA, TT, NR, TN, ZA, BB, PO, KE, BJ, PP, MI, LC) s dynamickým filtrovaním podľa zoomu.
 
 ---
 
@@ -75,7 +83,7 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 | :--- | :--- | :--- |
 | **ESP32-C3 SuperMini** | Riadiaci mikrokontrolér (RISC-V 160MHz, WiFi, BLE, USB-C) | Kompaktný rozmer, nízka spotreba |
 | **GC9A01 1.28″ Round LCD** | Okrúhly IPS displej 240×240 px, SPI zbernica | Krásne pozorovacie uhly a živé farby |
-| **Tlačidlo (BOOT / Externé)** | Tlačidlo pripojené medzi GPIO9 a GND | Prepínanie zoomu a reset |
+| **Tlačidlo (BOOT / Externé)** | Tlačidlo pripojené medzi GPIO9 a GND | Prepínanie zoomu, režimov a reset |
 | **3D Krabička** | Krabička prispôsobená pre okrúhly radar | [Dostupná na MakerWorld](https://makerworld.com/cs/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display) |
 
 ---
@@ -106,12 +114,25 @@ Pripojenie displeja **GC9A01** k doske **ESP32-C3 SuperMini**:
 
 ## 🕹️ Ovládanie a funkcie tlačidla
 
-Zariadenie využíva jedno univerzálne tlačidlo na **GPIO9** obsluhované hardvérovým prerušením (ISR):
+Zariadenie využíva inteligentnú detekciu stlačení tlačidla na **GPIO9**:
 
-* 🔘 **Krátke stlačenie:** Cyklické prepínanie mierky zobrazenia:
+* 🔘 **1x Krátke stlačenie:** Cyklické prepínanie mierky zobrazenia:
   $$\text{10 km} \longrightarrow \text{25 km} \longrightarrow \text{50 km} \longrightarrow \text{100 km} \longrightarrow \text{250 km}$$
-  *(Zvolená mierka sa automaticky uloží do NVS pamäte a zostane zachovaná aj po reštarte).*
+* ✌️ **2x Krátke stlačenie (Dvojklik):** Okamžité manuálne prepnutie medzi **Počasím** a **Lietadlami** bez čakania na karusel.
 * 🔴 **Dlhé podržanie (≥ 3 sekundy):** Vykoná kompletný reset nastavení WiFi, vymaže NVS pamäť a reštartuje dosku do režimu konfiguračného portálu.
+
+---
+
+## 🌐 Lokálny Web Dashboard (Port 80 / mDNS)
+
+Po pripojení dosky k domácej Wi-Fi sieti je v prehliadači na adrese **`http://espmeteoradar.local`** (alebo priamo na pridelenej IP adrese, napr. `http://192.168.1.150`) dostupný moderný vstavaný **Web Dashboard**:
+
+* 📊 **Živý stav radaru:** Zobrazenie aktuálneho režimu, zvoleného zoomu, sily signálu WiFi (RSSI) a počtu lietadiel v dosahu.
+* 🎮 **Diaľkové ovládanie:** Prepínanie zoomu (10, 25, 50, 100, 250 km), prepínanie režimu Počasie / Lietadlá a pozastavenie/zapnutie karuselu.
+* ✈️ **Živá tabuľka lietadiel:** Zoznam všetkých zachytených lietadiel v reálnom čase s informáciami o trase letísk (`VIE>AMS`), type lietadla, rýchlosti v km/h, výške v metroch a presných GPS súradniciach.
+* 📍 **Automatické nastavenie GPS polohy:** Jedným kliknutím na tlačidlo *„📍 Nastaviť polohu podľa GPS prehliadača“* zariadenie načíta vašu presnú polohu z GPS vášho smartfónu alebo notebooku.
+* 📶 **Zmena Wi-Fi siete priamo z webu:** Tlačidlo *„🔍 Vyhľadať siete“* prehľadá okolie, zobrazí silu signálu (RSSI) a umožní jednoducho prepojiť dosku na inú domácu Wi-Fi sieť.
+* ⚙️ **Rýchla zmena nastavení:** Úprava intervalu karuselu a časového offsetu bez nutnosti hardvérového resetu.
 
 ---
 
@@ -171,7 +192,7 @@ Skript `merge_bin.py` po každej kompilácii automaticky vygeneruje aj pripraven
 
 > [!IMPORTANT]
 > **Prečo sa pri niektorých lietadlách zobrazuje kód (napr. WZZ488R) a pri iných trasa (napr. VIE>AMS)?**
-> Bežné komerčné lety s letovým plánom v medzinárodnej databáze sa automaticky preložia na kód letísk. Menšie súkromné alebo vojenské lety letový plán nemajú, preto sa pri nich zobrazuje ich oficiálny volací znak (Callsign).
+> Komerčné lety s letovým plánom v databáze sa automaticky preložia na kód letísk. Súkromné alebo vojenské lety letový plán nemajú, preto sa pri nich zobrazuje ich oficiálny volací znak (Callsign).
 
 ---
 
