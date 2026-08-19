@@ -74,8 +74,10 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
   * Zobrazenie času zosnímania radaru s automatickým offsetom časového pásma.
   * Zameriavací kríž a diaľkové kružnice.
 * 🌙 **Nočný režim (Auto-Dimming):** Automatické stlmenie jasu displeja počas nočných hodín (22:00 – 06:00) podľa času z NTP.
-* 🌐 **Lokálny Web Dashboard s telemetriou hardvéru:**
+* 🌐 **Lokálny Web Dashboard s telemetriou hardvéru a OTA aktualizáciou:**
   * Vstavaný web server na porte 80 s responzívnym dark-mode dizajnom.
+  * **🚀 1-Kliknutím OTA aktualizácia priamo z GitHubu:** Automatické overenie najnovšieho vydania cez GitHub API a stiahnutie + inštalácia nového firmvéru priamo do ESP32 bez nutnosti kábla alebo počítača.
+  * **📁 Manuálny OTA Upload:** Možnosť nahrať vygenerovaný súbor `.bin` priamo z webového prehliadača.
   * **Hardvérová telemetria:** Frekvencia CPU (MHz), interná teplota čipu (°C), voľná a celková RAM (KB / %), veľkosť Flash pamäte, minimálna zaznamenaná RAM a celkový čas behu (Uptime).
   * **Živá tabuľka lietadiel:** Zoznam všetkých zachytených lietadiel v reálnom čase s trasou, rýchlosťou, výškou a koordinátmi.
   * **Nastavenie GPS polohy:** 1-kliknutím zistenie polohy cez GPS mobilu/PC alebo automatický sieťový IP fallback.

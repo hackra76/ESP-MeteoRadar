@@ -39,11 +39,14 @@
 #include <WiFiManager.h>
 #include <PNGdec.h>
 #include <ArduinoJson.h>
+#include <Update.h>
 #include <math.h>
 
 #include "config.h"
 #include "display_gc9a01.h"
 #include "ui_font.h"
+
+static const char* CURRENT_VERSION = "v1.5.0";
 
 // =======================================================================================
 // 1. GLOBÁLNE INŠTANCIE & DÁTOVÉ ŠTRUKTÚRY
@@ -674,6 +677,31 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
         <input type="submit" id="btn-save-wifi" value="💾 Pripojiť k novej Wi-Fi" style="background:#238636; border-color:#2ea043; width:100%;">
       </form>
     </div>
+
+    <!-- KARTA 7: AKTUALIZÁCIA FIRMVÉRU (OTA) -->
+    <div class="card">
+      <h2>🚀 Aktualizácia firmvéru (OTA)</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.5.0</span></div>
+        <button type="button" onclick="checkOta()" id="btn-check-ota" style="font-size:0.8rem; padding:6px 12px; background:#1f6feb; border-color:#58a6ff;">🔍 Skontrolovať GitHub</button>
+      </div>
+
+      <div id="ota-info-box" style="display:none; background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:12px; margin-bottom:14px;">
+        <div id="ota-status-text" style="font-weight:600; margin-bottom:6px;"></div>
+        <div id="ota-release-notes" style="font-size:0.85rem; color:#8b949e; margin-bottom:10px; max-height:100px; overflow-y:auto; white-space:pre-wrap;"></div>
+        <button type="button" onclick="startGithubOta()" id="btn-start-ota" style="background:#238636; border-color:#2ea043; width:100%; font-weight:bold; display:none;">
+          ⬇️ Stiahnuť a aktualizovať z GitHubu
+        </button>
+      </div>
+
+      <hr style="border:0; border-top:1px solid #30363d; margin:14px 0;">
+
+      <label>Alebo nahrať lokálny súbor (.bin):</label>
+      <form id="upload-form" onsubmit="uploadLocalOta(event)">
+        <input type="file" id="ota-file" accept=".bin" required style="margin-bottom:8px;">
+        <input type="submit" id="btn-upload-ota" value="📁 Nahrať firmvér z PC/mobilu" style="background:#30363d; border-color:#8b949e; width:100%;">
+      </form>
+    </div>
   </div>
 
   <script>
@@ -918,6 +946,89 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       }
     }
 
+    async function checkOta() {
+      const btn = document.getElementById('btn-check-ota');
+      const box = document.getElementById('ota-info-box');
+      const statusTxt = document.getElementById('ota-status-text');
+      const notes = document.getElementById('ota-release-notes');
+      const startBtn = document.getElementById('btn-start-ota');
+      
+      btn.disabled = true;
+      btn.innerText = '⏳ Kontrolujem...';
+      box.style.display = 'block';
+      statusTxt.innerText = 'Pripájam k serveru GitHub...';
+      notes.innerText = '';
+      startBtn.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/ota/check');
+        const d = await res.json();
+        
+        if (d.has_update) {
+          statusTxt.innerHTML = '🎉 <span style="color:#2ea043;">Dostupná nová verzia: ' + d.latest_version + '</span> (vaša: ' + d.current_version + ')';
+          notes.innerText = d.notes || d.name || '';
+          startBtn.style.display = 'block';
+          startBtn.innerText = '🚀 Aktualizovať na ' + d.latest_version;
+        } else {
+          statusTxt.innerHTML = '✅ <span style="color:#58a6ff;">Používate najnovšiu verziu ' + d.current_version + '</span>';
+          notes.innerText = d.name ? ('Posledný release: ' + d.name) : '';
+          startBtn.style.display = 'block';
+          startBtn.innerText = '🔄 Preinštalovať ' + d.current_version + ' z GitHubu';
+        }
+      } catch (err) {
+        statusTxt.innerHTML = '❌ <span style="color:#f85149;">Chyba pri kontrole: ' + err + '</span>';
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '🔍 Skontrolovať GitHub';
+      }
+    }
+
+    async function startGithubOta() {
+      if (!confirm('Naozaj spustiť OTA aktualizáciu z GitHubu?\nPočas aktualizácie nevypínajte napájanie zariadenia!')) return;
+      const startBtn = document.getElementById('btn-start-ota');
+      startBtn.disabled = true;
+      startBtn.innerText = '⏳ Sťahujem a inštalujem... Sledujte displej ESP32';
+      try {
+        await fetch('/api/ota/github', { method: 'POST' });
+        alert('OTA aktualizácia bola spustená!\nESP32 sťahuje firmvér a po dokončení sa automaticky reštartuje.');
+      } catch (e) {
+        alert('Chyba pri spustení: ' + e);
+        startBtn.disabled = false;
+      }
+    }
+
+    async function uploadLocalOta(e) {
+      e.preventDefault();
+      const fileInp = document.getElementById('ota-file');
+      if (!fileInp.files || fileInp.files.length === 0) return;
+      if (!confirm('Naozaj nahrať vybraný firmvér "' + fileInp.files[0].name + '"?')) return;
+
+      const btn = document.getElementById('btn-upload-ota');
+      btn.disabled = true;
+      btn.value = '⏳ Nahrávam firmvér do ESP...';
+
+      const formData = new FormData();
+      formData.append('firmware', fileInp.files[0]);
+
+      try {
+        const res = await fetch('/api/ota/upload', {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          alert('Firmvér úspešne nahraný!\nESP32 sa reštartuje...');
+        } else {
+          alert('Chyba pri nahrávaní súboru.');
+          btn.disabled = false;
+          btn.value = '📁 Nahrať firmvér z PC/mobilu';
+        }
+      } catch (err) {
+        alert('Zlyhalo: ' + err);
+        btn.disabled = false;
+        btn.value = '📁 Nahrať firmvér z PC/mobilu';
+      }
+    }
+
     loadData();
   </script>
 </body>
@@ -1055,6 +1166,177 @@ void handleApiReboot() {
   ESP.restart();
 }
 
+void handleApiOtaCheck() {
+  if (WiFi.status() != WL_CONNECTED) {
+    server.send(503, "application/json", "{\"error\":\"WiFi nie je pripojené\"}");
+    return;
+  }
+
+  releaseCanvas(); // Uvoľníme RAM pre bezpečný TLS handshake
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setHandshakeTimeout(8000);
+  HTTPClient http;
+  http.setTimeout(10000);
+  http.setUserAgent("ESP32-MeteoRadar");
+
+  JsonDocument doc;
+  doc["current_version"] = CURRENT_VERSION;
+  doc["has_update"] = false;
+  doc["latest_version"] = CURRENT_VERSION;
+  doc["name"] = "";
+  doc["notes"] = "";
+
+  if (http.begin(client, "https://api.github.com/repos/hackra76/ESP-MeteoRadar/releases/latest")) {
+    int code = http.GET();
+    if (code == HTTP_CODE_OK) {
+      JsonDocument filter;
+      filter["tag_name"] = true;
+      filter["name"] = true;
+      filter["body"] = true;
+
+      JsonDocument ghDoc;
+      DeserializationError err = deserializeJson(ghDoc, http.getStream(), DeserializationOption::Filter(filter));
+      if (!err) {
+        String tag = ghDoc["tag_name"] | "";
+        String name = ghDoc["name"] | "";
+        String body = ghDoc["body"] | "";
+
+        doc["latest_version"] = tag;
+        doc["name"] = name;
+        doc["notes"] = body;
+        doc["has_update"] = (tag.length() > 0 && tag != String(CURRENT_VERSION));
+      }
+    }
+    http.end();
+  }
+  client.stop();
+
+  String jsonStr;
+  serializeJson(doc, jsonStr);
+  server.send(200, "application/json", jsonStr);
+}
+
+void handleApiOtaGithub() {
+  if (WiFi.status() != WL_CONNECTED) {
+    server.send(503, "application/json", "{\"error\":\"WiFi nie je pripojené\"}");
+    return;
+  }
+
+  server.send(200, "application/json", "{\"status\":\"starting\"}");
+  delay(300);
+
+  releaseCanvas();
+  showStatus("OTA Aktualizacia...\nPripajam GitHub...");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setHandshakeTimeout(12000);
+
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(35000);
+  http.setUserAgent("ESP32-MeteoRadar");
+
+  String url = "https://github.com/hackra76/ESP-MeteoRadar/releases/latest/download/firmware.bin";
+
+  if (http.begin(client, url)) {
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+      int totalLen = http.getSize();
+      WiFiClient* stream = http.getStreamPtr();
+
+      if (Update.begin(totalLen > 0 ? totalLen : UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+        size_t written = 0;
+        uint8_t buff[1024];
+        int lastPct = -1;
+
+        while (http.connected() && (written < (size_t)totalLen || totalLen <= 0)) {
+          size_t avail = stream->available();
+          if (avail) {
+            size_t toRead = (avail < sizeof(buff)) ? avail : sizeof(buff);
+            int n = stream->readBytes(buff, toRead);
+            if (n > 0) {
+              Update.write(buff, n);
+              written += n;
+
+              if (totalLen > 0) {
+                int pct = (int)((written * 100) / totalLen);
+                if (pct != lastPct && pct % 5 == 0) {
+                  lastPct = pct;
+                  showStatus("OTA Aktualizacia...\nStahujem: " + String(pct) + " %");
+                }
+              }
+            }
+          } else {
+            delay(1);
+          }
+          if (totalLen > 0 && written >= (size_t)totalLen) break;
+          if (stream->available() == 0 && !http.connected()) break;
+        }
+
+        if (Update.end(true)) {
+          showStatus("OTA Dokoncena!\nRestartujem...");
+          delay(1500);
+          ESP.restart();
+          return;
+        } else {
+          showStatus("Chyba zapisu OTA:\n" + String(Update.errorString()));
+          delay(3000);
+        }
+      } else {
+        showStatus("Chyba inicializacie\nOTA Update");
+        delay(3000);
+      }
+    } else {
+      showStatus("Chyba stahovania\nHTTP: " + String(httpCode));
+      delay(3000);
+    }
+    http.end();
+  }
+  client.stop();
+}
+
+void handleApiOtaUploadLoop() {
+  HTTPUpload& upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    releaseCanvas();
+    showStatus("Manualna OTA...\nPripravujem...");
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+      showStatus("Chyba OTA start!");
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      showStatus("Chyba zapisu OTA!");
+    } else {
+      static int lastUploadPct = -1;
+      int pct = (upload.totalSize > 0) ? (int)((upload.currentSize * 100) / upload.totalSize) : 0;
+      if (pct != lastUploadPct && pct % 10 == 0) {
+        lastUploadPct = pct;
+        showStatus("Manualna OTA...\n" + String(pct) + " %");
+      }
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      showStatus("OTA Dokoncena!\nRestartujem...");
+    } else {
+      showStatus("Chyba OTA END!");
+    }
+  }
+}
+
+void handleApiOtaUploadDone() {
+  server.sendHeader("Connection", "close");
+  if (Update.hasError()) {
+    server.send(500, "text/plain", "Chyba OTA aktualizacie");
+  } else {
+    server.send(200, "text/plain", "OK - Restartujem ESP...");
+    delay(1000);
+    ESP.restart();
+  }
+}
+
 void setupWebServer() {
   server.on("/", HTTP_GET, handleWebRoot);
   server.on("/api/status", HTTP_GET, handleApiStatus);
@@ -1063,6 +1345,9 @@ void setupWebServer() {
   server.on("/api/scan", HTTP_GET, handleApiScan);
   server.on("/api/wifi", HTTP_POST, handleApiWifi);
   server.on("/api/reboot", HTTP_GET, handleApiReboot);
+  server.on("/api/ota/check", HTTP_GET, handleApiOtaCheck);
+  server.on("/api/ota/github", HTTP_POST, handleApiOtaGithub);
+  server.on("/api/ota/upload", HTTP_POST, handleApiOtaUploadDone, handleApiOtaUploadLoop);
   server.begin();
   Serial.println("Web server spustený na porte 80!");
 }
