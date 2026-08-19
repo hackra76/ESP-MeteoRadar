@@ -1386,20 +1386,23 @@ void drawEdgeIndicator(LovyanGFX& target, int mapX, int mapY, bool is_mil) {
   float dy = (float)(mapY - crop.y1) * TFT_H / crop.h() - cy;
 
   float angle = atan2f(dy, dx);
-  int edgeX = cx + (int)(roundf(cosf(angle) * 112.0f));
-  int edgeY = cy + (int)(roundf(sinf(angle) * 112.0f));
+  int edgeX = cx + (int)(roundf(cosf(angle) * 114.0f));
+  int edgeY = cy + (int)(roundf(sinf(angle) * 114.0f));
 
   uint16_t dotColor = is_mil ? target.color565(255, 0, 0) : target.color565(255, 140, 0);
 
-  target.fillCircle(edgeX, edgeY, 3, dotColor);
-  target.drawCircle(edgeX, edgeY, 3, TFT_BLACK);
+  target.fillCircle(edgeX, edgeY, 4, dotColor);
+  target.drawCircle(edgeX, edgeY, 4, TFT_BLACK);
 }
 
 /** Stiahnutie zoznamu lietadiel z ADS-B API */
 void fetchPlanesData() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  float radiusNm = currentRadiusKm / 1.852f;
+  // Sťahujeme o 35% širší rádius, aby sme získali lietadlá tesne za hranicou obrazovky pre Edge Dots
+  float fetchRadiusKm = currentRadiusKm * 1.35f;
+  if (fetchRadiusKm > 320.0f) fetchRadiusKm = 320.0f;
+  float radiusNm = fetchRadiusKm / 1.852f;
   String url = "https://opendata.adsb.fi/api/v3/lat/" + String(centerLat, 4) + "/lon/" + String(centerLon, 4) + "/dist/" + String(radiusNm, 1);
 
   WiFiClientSecure client;
@@ -1587,7 +1590,7 @@ void drawPlanes() {
 
     float distFromCenter = sqrtf((float)((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)));
 
-    if (distFromCenter <= 112.0f) {
+    if (distFromCenter <= 106.0f) {
       drawAircraftSymbol(target, sx, sy, ac.nose_deg, ac.track, ac.gs_knots, ac.is_mil);
       if (currentRadiusKm <= 50) {
         drawAircraftTag(target, sx, sy, ac);
@@ -1723,11 +1726,14 @@ void setup() {
   tft.loadFont(ui_font_vlw, lgfx::IFont::font_type_t::ft_vlw);
   tft.setTextSize(0.80f);
 
+  canvas.setColorDepth(8); // 8-bitový farebný buffer (57.6 KB namiesto 115 KB) - 100% zaručená alokácia na ESP32-C3!
   if (canvas.createSprite(TFT_W, TFT_H)) {
     canvas.loadFont(ui_font_vlw, lgfx::IFont::font_type_t::ft_vlw);
     canvas.setTextSize(0.80f);
     hasCanvas = true;
-    Serial.println("Canvas sprite 240x240 úspešne vytvorený (Double Buffering)!");
+    Serial.println("Canvas sprite 240x240 (8-bit, 57.6 KB) úspešne vytvorený (Double Buffering)!");
+  } else {
+    Serial.println("CHYBA: Nepodarilo sa alokovať canvas sprite!");
   }
 
   pinMode(ZOOM_BUTTON_PIN, INPUT_PULLUP);
