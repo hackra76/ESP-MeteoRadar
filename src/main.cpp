@@ -1042,9 +1042,7 @@ bool downloadLatestRadar() {
   if (WiFi.status() != WL_CONNECTED) return false;
   
   for (int attempt = 1; attempt <= 2; attempt++) {
-    WiFiClientSecure client; 
-    client.setInsecure(); 
-    client.setHandshakeTimeout(15000);
+    WiFiClient client; 
     HTTPClient http; 
     http.setTimeout(15000);
 
@@ -1073,19 +1071,25 @@ bool downloadLatestRadar() {
         if (!latest.isEmpty()) {
           if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) return true;
           String url = String(SHMU_BASE_URL) + latest;
+          WiFiClient clientImg;
           HTTPClient httpImg; 
           httpImg.setTimeout(25000);
-          if (httpImg.begin(client, url) && httpImg.GET() == HTTP_CODE_OK) {
+          if (httpImg.begin(clientImg, url) && httpImg.GET() == HTTP_CODE_OK) {
             File f = SPIFFS.open(RADAR_FILE, "w");
             if (f) {
               httpImg.writeToStream(&f);
               f.close();
               lastPngName = latest;
+              httpImg.end();
+              clientImg.stop();
               return true;
             }
           }
+          httpImg.end();
+          clientImg.stop();
         }
       }
+      http.end();
     }
     client.stop();
     if (attempt < 2) delay(3000);
@@ -1168,7 +1172,7 @@ static void fetchRouteForCallsign(const char* cs, char* out_route, size_t out_le
     return;
   }
 
-  if (ESP.getFreeHeap() < 40000) return;
+  if (ESP.getFreeHeap() < 35000) return;
 
   char url[96];
   snprintf(url, sizeof(url), "%s%c%c/%s.json", kRouteBaseUrl, cs[0], cs[1], cs);
@@ -1403,12 +1407,9 @@ void fetchPlanesData() {
   float fetchRadiusKm = currentRadiusKm * 1.35f;
   if (fetchRadiusKm > 320.0f) fetchRadiusKm = 320.0f;
   float radiusNm = fetchRadiusKm / 1.852f;
-  String url = "https://opendata.adsb.fi/api/v3/lat/" + String(centerLat, 4) + "/lon/" + String(centerLon, 4) + "/dist/" + String(radiusNm, 1);
+  String url = "http://opendata.adsb.fi/api/v3/lat/" + String(centerLat, 4) + "/lon/" + String(centerLon, 4) + "/dist/" + String(radiusNm, 1);
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setHandshakeTimeout(10000);
-
+  WiFiClient client;
   HTTPClient http;
   http.useHTTP10(true);
   http.setTimeout(10000);

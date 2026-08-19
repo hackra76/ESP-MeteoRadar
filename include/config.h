@@ -26,8 +26,8 @@ static constexpr uint32_t RESET_HOLD_MS = 3000;
 static constexpr uint32_t UPDATE_INTERVAL_MS = 5UL * 60UL * 1000UL; // 5 min
 
 // ===== SHMÚ OpenData =====
-static constexpr const char* SHMU_API_URL  = "https://www.shmu.sk/api/v1/meteo/getradardata";
-static constexpr const char* SHMU_BASE_URL = "https://www.shmu.sk/data/dataradary/data.cmax/";
+static constexpr const char* SHMU_API_URL  = "http://www.shmu.sk/api/v1/meteo/getradardata";
+static constexpr const char* SHMU_BASE_URL = "http://www.shmu.sk/data/dataradary/data.cmax/";
 
 // PNG radar kompozit SHMÚ (cmax.kruh) má rozmer 800 x 550 px.
 static constexpr int RADAR_IMG_W = 800;
