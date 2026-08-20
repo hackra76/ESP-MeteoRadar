@@ -46,7 +46,7 @@
 #include "display_gc9a01.h"
 #include "ui_font.h"
 
-static const char* CURRENT_VERSION = "v1.5.0";
+static const char* CURRENT_VERSION = "v1.6.0";
 
 // =======================================================================================
 // 1. GLOBÁLNE INŠTANCIE & DÁTOVÉ ŠTRUKTÚRY
@@ -154,7 +154,7 @@ uint32_t lastPlaneFetchMs = 0;
 uint32_t lastPlaneRedrawMs = 0;
 uint32_t lastPlaneFetchFixMs = 0;
 static constexpr uint32_t PLANE_FETCH_INTERVAL_MS = 10000;
-static constexpr uint32_t PLANE_REDRAW_INTERVAL_MS = 1000; // Plynulé prekreslenie každú 1s
+static constexpr uint32_t PLANE_REDRAW_INTERVAL_MS = 50; // Plynulé 20 FPS vykresľovanie pre plynulý radar sweep
 
 // Dátový model lietadla pre vykreslenie štítku
 struct AircraftData {
@@ -165,6 +165,8 @@ struct AircraftData {
   float gs_knots;
   float vrate_fpm;
   bool is_mil;
+  bool is_emergency;
+  char squawk[5];
   char route[10];    ///< Formát letísk napr. "VIE>AMS"
   char callsign[9];  ///< Volací znak napr. "KLM1902"
   char type[5];      ///< Typ ICAO napr. "A21N"
@@ -293,7 +295,43 @@ void checkResetButtonAtBoot() {
   }
 }
 
-/** Kontrola a automatická úprava jasu podľa nočného režimu */
+// Astronomický výpočet východu a západu slnka (v minútach od polnoci lokálneho času)
+void calculateSunTimes(float lat, float lon, int offsetHours, int& sunriseMin, int& sunsetMin) {
+  time_t rawtime = time(nullptr);
+  struct tm* t = localtime(&rawtime);
+  int yday = (t->tm_yday >= 0 && t->tm_yday < 366) ? t->tm_yday : 180;
+
+  float gamma = 2.0f * (float)M_PI * (float)yday / 365.0f;
+  float decl = 0.006918f - 0.399912f * cosf(gamma) + 0.070257f * sinf(gamma)
+               - 0.006758f * cosf(2.0f * gamma) + 0.000907f * sinf(2.0f * gamma);
+
+  float latRad = lat * DEG_TO_RAD;
+  float cosH0 = (cosf(90.833f * DEG_TO_RAD) - sinf(latRad) * sinf(decl)) / (cosf(latRad) * cosf(decl));
+  
+  if (cosH0 > 1.0f) {
+    sunriseMin = -1; sunsetMin = -1; return;
+  } else if (cosH0 < -1.0f) {
+    sunriseMin = 0; sunsetMin = 1440; return;
+  }
+
+  float H0_deg = acosf(cosH0) * RAD_TO_DEG;
+  float eqtime = 229.18f * (0.000075f + 0.001868f * cosf(gamma) - 0.032077f * sinf(gamma)
+                 - 0.014615f * cosf(2.0f * gamma) - 0.040849f * sinf(2.0f * gamma));
+
+  float solarNoonUtc = 720.0f - (4.0f * lon) - eqtime;
+  float riseUtc = solarNoonUtc - (H0_deg * 4.0f);
+  float setUtc = solarNoonUtc + (H0_deg * 4.0f);
+
+  sunriseMin = (int)(riseUtc + (offsetHours * 60.0f) + 0.5f);
+  sunsetMin = (int)(setUtc + (offsetHours * 60.0f) + 0.5f);
+
+  while (sunriseMin < 0) sunriseMin += 1440;
+  while (sunriseMin >= 1440) sunriseMin -= 1440;
+  while (sunsetMin < 0) sunsetMin += 1440;
+  while (sunsetMin >= 1440) sunsetMin -= 1440;
+}
+
+/** Kontrola a automatická úprava jasu podľa nočného režimu (Astronomický západ/východ slnka) */
 void updateNightMode() {
   if (!nightModeEnabled) {
     if (isNightActive) {
@@ -307,12 +345,25 @@ void updateNightMode() {
   struct tm* t = localtime(&now);
   if (t->tm_year < 100) return; // NTP ešte nie je zosynchronizované
 
-  int hour = t->tm_hour;
-  bool shouldBeNight = (hour >= nightStartHour || hour < nightEndHour);
+  int currentMin = t->tm_hour * 60 + t->tm_min;
+  int sunriseMin = 6 * 60;  // fallback 06:00
+  int sunsetMin = 21 * 60;  // fallback 21:00
+
+  calculateSunTimes(centerLat, centerLon, timeOffsetHours, sunriseMin, sunsetMin);
+
+  bool shouldBeNight = false;
+  if (sunriseMin < sunsetMin) {
+    shouldBeNight = (currentMin < sunriseMin || currentMin >= sunsetMin);
+  } else {
+    shouldBeNight = (currentMin >= sunsetMin && currentMin < sunriseMin);
+  }
+
   if (shouldBeNight != isNightActive) {
     isNightActive = shouldBeNight;
     tft.setBrightness(isNightActive ? 30 : 180);
-    Serial.printf("Nočný režim: %s (jas %d)\n", isNightActive ? "AKTÍVNY" : "VYPNUTÝ", isNightActive ? 30 : 180);
+    Serial.printf("Nočný režim (Slnko): %s (jas %d, Východ: %02d:%02d, Západ: %02d:%02d)\n", 
+                  isNightActive ? "AKTÍVNY" : "VYPNUTÝ", isNightActive ? 30 : 180,
+                  sunriseMin / 60, sunriseMin % 60, sunsetMin / 60, sunsetMin % 60);
   }
 }
 
@@ -530,7 +581,12 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
     select { cursor: pointer; }
     .badge { padding: 3px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; background: rgba(56, 139, 253, 0.15); color: var(--accent); }
     .badge-green { background: rgba(63, 185, 80, 0.15); color: var(--accent-green); }
+    #map { height: 280px; width: 100%; border-radius: 8px; border: 1px solid var(--border); margin-top: 6px; z-index: 1; }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; }
+    .plane-icon { display: flex; align-items: center; justify-content: center; text-shadow: 0 0 3px #000; font-size: 16px; }
   </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
   <div class="container">
@@ -611,13 +667,31 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       </div>
     </div>
 
+    <!-- KARTA: INTERAKTÍVNA ŽIVÁ MAPA (LEAFLET) -->
+    <div class="card">
+      <h2>🗺️ Živá radarová mapa (Leaflet)</h2>
+      <div id="map"></div>
+      <div style="font-size: 0.8rem; color: #8b949e; margin-top: 8px; text-align: center;">
+        💡 Kliknutím na mapu alebo potiahnutím značky zmeníte stred radaru. Zelený kruh zobrazuje okruh <span id="map-radius-txt">50</span> km.
+      </div>
+    </div>
+
     <!-- KARTA 5: NASTAVENIA POLOHY & RADARU -->
     <div class="card">
       <h2>📍 Nastavenia polohy a radaru</h2>
       
-      <div style="margin-bottom: 10px;">
-        <label>Rýchly výber slovenského mesta:</label>
-        <select onchange="onCityPreset(this)">
+      <div style="margin-bottom: 12px;">
+        <label>🔍 Vyhľadať obec, mesto alebo adresu:</label>
+        <div style="display: flex; gap: 6px; margin-top: 4px;">
+          <input type="text" id="inp-search-city" placeholder="Napr. Senec, Terchová, Zvolen..." style="flex: 1;" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCityLocation();}">
+          <button type="button" onclick="searchCityLocation()" id="btn-search-city" style="background:#238636; border-color:#2ea043; white-space:nowrap; padding:6px 14px; font-weight:600;">🔍 Hľadať</button>
+        </div>
+        <div id="city-search-results" style="display:none; margin-top:6px; background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:6px;"></div>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label>Alebo rýchly výber mesta:</label>
+        <select onchange="onCityPreset(this)" style="margin-top: 4px;">
           <option value="">-- Zvoľte mesto pre automatické vyplnenie --</option>
           <option value="48.1486,17.1077">Bratislava (48.1486, 17.1077)</option>
           <option value="48.7164,21.2611">Košice (48.7164, 21.2611)</option>
@@ -639,7 +713,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       </div>
 
       <button type="button" onclick="useMyLocation()" id="btn-gps" style="background:#1f6feb; border-color:#58a6ff; width:100%; margin-bottom:12px; font-weight:600;">
-        📍 Zistiť moju polohu (GPS / Sieťová IP)
+        📍 Zistiť polohu zo siete / GPS
       </button>
 
       <form onsubmit="saveSettings(event)">
@@ -682,7 +756,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
     <div class="card">
       <h2>🚀 Aktualizácia firmvéru (OTA)</h2>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.5.0</span></div>
+        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.6.0</span></div>
         <button type="button" onclick="checkOta()" id="btn-check-ota" style="font-size:0.8rem; padding:6px 12px; background:#1f6feb; border-color:#58a6ff;">🔍 Skontrolovať GitHub</button>
       </div>
 
@@ -696,10 +770,15 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
 
       <hr style="border:0; border-top:1px solid #30363d; margin:14px 0;">
 
-      <label>Alebo nahrať lokálny súbor (.bin):</label>
+      <label>📁 Manuálny OTA upload z počítača / mobilu:</label>
+      <div style="font-size:0.8rem; color:#f0883e; background:rgba(240,136,62,0.12); border:1px solid rgba(240,136,62,0.4); border-radius:6px; padding:10px; margin:6px 0 10px 0; line-height: 1.4;">
+        ⚠️ <b>UPOZORNENIE K SÚBOROM FIRMVÉRU:</b><br>
+        • Pre tento webový OTA formulár použite <b>výhradne súbor <code>firmware.bin</code></b> (samotná aplikácia z GitHub Release alebo <code>.pio/build/...</code>).<br>
+        • <b>NIKDY</b> sem nenahrávajte <code>merged-firmware.bin</code>! Súbor <code>merged-firmware.bin</code> obsahuje bootloader a partície od adresy 0x0 a je určený <b>iba pre flashovanie cez USB kábel</b>.
+      </div>
       <form id="upload-form" onsubmit="uploadLocalOta(event)">
         <input type="file" id="ota-file" accept=".bin" required style="margin-bottom:8px;">
-        <input type="submit" id="btn-upload-ota" value="📁 Nahrať firmvér z PC/mobilu" style="background:#30363d; border-color:#8b949e; width:100%;">
+        <input type="submit" id="btn-upload-ota" value="📁 Nahrať firmvér (.bin) do ESP" style="background:#30363d; border-color:#8b949e; width:100%;">
       </form>
     </div>
   </div>
@@ -735,7 +814,8 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
         document.getElementById('wifi-rssi').innerText = d.rssi + ' dBm';
         document.getElementById('wifi-pct').innerText = 'Kvalita: ' + rssiToPct(d.rssi) + ' % (' + (d.ssid || '') + ')';
 
-        // Stav systému & Hardvér
+        // Hardvérová telemetria & Stav
+        if (d.version) document.getElementById('ota-cur-ver').innerText = d.version;
         document.getElementById('sys-cpu').innerText = (d.cpu_mhz || 160) + ' MHz';
         document.getElementById('sys-temp').innerText = 'Teplota: ' + (d.temp ? d.temp.toFixed(1) : '--') + ' °C';
         document.getElementById('sys-ram').innerText = d.heap_free + ' KB';
@@ -776,10 +856,106 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
           }
           tbody.innerHTML = html;
         }
+
+        // Aktualizácia interaktívnej Leaflet mapy
+        updateLeafletMap(d);
       } catch (e) {
         console.error(e);
       } finally {
         setTimeout(loadData, 3000);
+      }
+    }
+
+    let mapInstance = null;
+    let centerMarker = null;
+    let radiusCircle = null;
+    const planeMarkers = {};
+
+    function updateLeafletMap(d) {
+      if (typeof L === 'undefined') return;
+      const lat = parseFloat(d.lat);
+      const lon = parseFloat(d.lon);
+      const radKm = parseFloat(d.radius);
+
+      const radTxt = document.getElementById('map-radius-txt');
+      if (radTxt) radTxt.innerText = radKm;
+
+      if (!mapInstance) {
+        mapInstance = L.map('map').setView([lat, lon], radKm <= 25 ? 10 : (radKm <= 50 ? 9 : (radKm <= 100 ? 8 : 7)));
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 18,
+          attribution: '&copy; OpenStreetMap'
+        }).addTo(mapInstance);
+
+        centerMarker = L.marker([lat, lon], { draggable: true }).addTo(mapInstance);
+        centerMarker.bindPopup('<b>Stred radaru</b><br>Potiahnutím zmeníte polohu');
+
+        centerMarker.on('dragend', function(e) {
+          const pos = e.target.getLatLng();
+          document.getElementById('inp-lat').value = pos.lat.toFixed(4);
+          document.getElementById('inp-lon').value = pos.lng.toFixed(4);
+          userIsEditing = true;
+          if (radiusCircle) radiusCircle.setLatLng(pos);
+        });
+
+        mapInstance.on('click', function(e) {
+          centerMarker.setLatLng(e.latlng);
+          document.getElementById('inp-lat').value = e.latlng.lat.toFixed(4);
+          document.getElementById('inp-lon').value = e.latlng.lng.toFixed(4);
+          userIsEditing = true;
+          if (radiusCircle) radiusCircle.setLatLng(e.latlng);
+        });
+
+        radiusCircle = L.circle([lat, lon], {
+          radius: radKm * 1000,
+          color: '#3fb950',
+          fillColor: '#3fb950',
+          fillOpacity: 0.07,
+          weight: 2
+        }).addTo(mapInstance);
+      } else {
+        if (!userIsEditing) {
+          centerMarker.setLatLng([lat, lon]);
+          radiusCircle.setLatLng([lat, lon]);
+        }
+        radiusCircle.setRadius(radKm * 1000);
+      }
+
+      // Aktualizácia lietadiel na mape
+      const currentKeys = {};
+      if (d.planes && Array.isArray(d.planes)) {
+        d.planes.forEach(p => {
+          if (!p.lat || !p.lon) return;
+          const key = p.cs || (p.lat + '_' + p.lon);
+          currentKeys[key] = true;
+          const isMil = p.mil;
+          const isEmg = p.emg;
+          const angle = p.trk || 0;
+
+          const iconHtml = `<div style="transform: rotate(${angle}deg); font-size: 18px; line-height: 1;">✈️</div>`;
+          const planeIcon = L.divIcon({ html: iconHtml, className: 'plane-icon', iconSize: [22, 22], iconAnchor: [11, 11] });
+
+          const popupContent = `<b>${p.cs || 'NOCALL'}</b> ${p.t ? `(${p.t})` : ''}<br>` +
+                               `${p.route ? `Trasa: <b>${p.route}</b><br>` : ''}` +
+                               `Výška: ${p.alt || '--'} | Rýchlosť: ${p.gs ? Math.round(p.gs * 1.852) + ' km/h' : '--'}<br>` +
+                               `${isEmg ? '<span style="color:#f85149; font-weight:bold;">🚨 NÚDZA SQ ' + (p.sq || '') + '</span>' : ''}`;
+
+          if (planeMarkers[key]) {
+            planeMarkers[key].setLatLng([p.lat, p.lon]);
+            planeMarkers[key].setIcon(planeIcon);
+            planeMarkers[key].setPopupContent(popupContent);
+          } else {
+            planeMarkers[key] = L.marker([p.lat, p.lon], { icon: planeIcon }).addTo(mapInstance);
+            planeMarkers[key].bindPopup(popupContent);
+          }
+        });
+      }
+
+      for (const k in planeMarkers) {
+        if (!currentKeys[k]) {
+          mapInstance.removeLayer(planeMarkers[k]);
+          delete planeMarkers[k];
+        }
       }
     }
 
@@ -839,26 +1015,81 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
       }
     }
 
+    async function searchCityLocation() {
+      const q = document.getElementById('inp-search-city').value.trim();
+      if (!q) return;
+      const btn = document.getElementById('btn-search-city');
+      const resBox = document.getElementById('city-search-results');
+      const old = btn.innerText;
+      btn.innerText = '⏳ Hľadám...';
+      btn.disabled = true;
+      resBox.style.display = 'none';
+      resBox.innerHTML = '';
+      userIsEditing = true;
+
+      try {
+        const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&countrycodes=sk,cz&limit=5';
+        const res = await fetch(url);
+        const list = await res.json();
+
+        if (list && list.length > 0) {
+          if (list.length === 1) {
+            applyCoords(list[0].lat, list[0].lon, list[0].display_name.split(',')[0]);
+          } else {
+            resBox.style.display = 'block';
+            resBox.innerHTML = '<div style="font-size:0.8rem; color:#8b949e; margin-bottom:4px;">Zvoľte správne miesto:</div>';
+            list.forEach(item => {
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.style.display = 'block';
+              b.style.width = '100%';
+              b.style.textAlign = 'left';
+              b.style.marginBottom = '4px';
+              b.style.fontSize = '0.8rem';
+              b.style.padding = '4px 8px';
+              b.innerText = '📍 ' + item.display_name.split(',').slice(0, 3).join(',');
+              b.onclick = () => {
+                applyCoords(item.lat, item.lon, item.display_name.split(',')[0]);
+                resBox.style.display = 'none';
+              };
+              resBox.appendChild(b);
+            });
+          }
+        } else {
+          alert('Miesto "' + q + '" sa nenašlo. Skúste zadať iný alebo presnejší názov.');
+        }
+      } catch (err) {
+        alert('Chyba pri vyhľadávaní: ' + err);
+      } finally {
+        btn.innerText = old;
+        btn.disabled = false;
+      }
+    }
+
     async function useMyLocation() {
       const btn = document.getElementById('btn-gps');
       const old = btn.innerText;
       btn.innerText = '⏳ Zisťujem polohu...';
       userIsEditing = true;
 
-      if (navigator.geolocation && window.isSecureContext) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            applyCoords(pos.coords.latitude, pos.coords.longitude, 'GPS');
-          },
-          async (err) => {
-            console.warn('GPS zlyhalo, prepínam na IP geolokáciu...', err);
-            await fetchIpLocation();
-          },
-          { enableHighAccuracy: true, timeout: 8000 }
-        );
-      } else {
-        await fetchIpLocation();
+      if (navigator.geolocation) {
+        try {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              applyCoords(pos.coords.latitude, pos.coords.longitude, 'GPS');
+            },
+            async (err) => {
+              console.warn('GPS nedostupné na HTTP, prepínam na sieťovú IP...', err);
+              await fetchIpLocation();
+            },
+            { enableHighAccuracy: true, timeout: 6000 }
+          );
+          return;
+        } catch (e) {
+          // Prehliadač odmietol volanie
+        }
       }
+      await fetchIpLocation();
 
       async function fetchIpLocation() {
         btn.innerText = '⏳ Zisťujem polohu cez sieť...';
@@ -866,7 +1097,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
           const res = await fetch('https://ipwho.is/');
           const d = await res.json();
           if (d && d.success && d.latitude && d.longitude) {
-            applyCoords(d.latitude, d.longitude, (d.city || 'IP'));
+            applyCoords(d.latitude, d.longitude, (d.city || 'IP Sieť'));
             return;
           }
         } catch (e) {}
@@ -875,12 +1106,12 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
           const res2 = await fetch('https://freeipapi.com/api/json');
           const d2 = await res2.json();
           if (d2 && d2.latitude && d2.longitude) {
-            applyCoords(d2.latitude, d2.longitude, (d2.cityName || 'IP'));
+            applyCoords(d2.latitude, d2.longitude, (d2.cityName || 'IP Sieť'));
             return;
           }
         } catch (e2) {}
 
-        alert('Automatické zistenie polohy cez sieť zlyhalo. Vyberte prosím mesto zo zoznamu vyššie.');
+        alert('Automatické zistenie polohy cez sieť zlyhalo. Použite prosím vyhľadanie mesta vyššie.');
         btn.innerText = old;
       }
 
@@ -1041,6 +1272,7 @@ void handleWebRoot() {
 
 void handleApiStatus() {
   JsonDocument doc;
+  doc["version"] = CURRENT_VERSION;
   doc["mode"] = (int)currentMode;
   doc["radius"] = (int)currentRadiusKm;
   doc["zoom_idx"] = zoomIndex;
@@ -1071,6 +1303,10 @@ void handleApiStatus() {
     obj["alt"] = aircraftList[i].alt;
     obj["lat"] = aircraftList[i].lat;
     obj["lon"] = aircraftList[i].lon;
+    obj["trk"] = (int)aircraftList[i].track;
+    obj["mil"] = aircraftList[i].is_mil;
+    obj["emg"] = aircraftList[i].is_emergency;
+    obj["sq"] = aircraftList[i].squawk;
   }
 
   String jsonStr;
@@ -1387,16 +1623,35 @@ bool downloadLatestRadar() {
     client.setInsecure();
     client.setHandshakeTimeout(10000);
     HTTPClient http; 
-    http.setTimeout(10000);
+    http.setTimeout(15000);
 
     if (http.begin(client, SHMU_API_URL)) {
       if (http.GET() == HTTP_CODE_OK) {
-        String resp = http.getString();
+        String window, latest, newestTs;
+        WiFiClient* stream = http.getStreamPtr();
+        uint8_t buf[512];
+        uint32_t startReadMs = millis();
+
+        while (http.connected() || stream->available()) {
+          size_t avail = stream->available();
+          if (avail) {
+            size_t toRead = (avail < sizeof(buf)) ? avail : sizeof(buf);
+            int n = stream->readBytes(buf, toRead);
+            if (n > 0) {
+              window += String((const char*)buf, n);
+              String candidate = findLatestPngNameInText(window, newestTs);
+              if (!candidate.isEmpty()) latest = candidate;
+              if (window.length() > 300) window = window.substring(window.length() - 200);
+            }
+            startReadMs = millis();
+          } else {
+            if (millis() - startReadMs > 10000) break;
+            delay(2);
+          }
+          if (stream->available() == 0 && !http.connected()) break;
+        }
         http.end(); 
         client.stop();
-
-        String newestTs;
-        String latest = findLatestPngNameInText(resp, newestTs);
 
         if (!latest.isEmpty()) {
           if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) return true;
@@ -1412,6 +1667,9 @@ bool downloadLatestRadar() {
               httpImg.writeToStream(&f);
               f.close();
               lastPngName = latest;
+              prefs.begin("radar", false);
+              prefs.putString("last_png", lastPngName);
+              prefs.end();
               httpImg.end();
               clientImg.stop();
               return true;
@@ -1577,6 +1835,38 @@ void drawAircraftSymbol(LovyanGFX& target, int x, int y, float heading_deg, floa
   target.fillTriangle(tip_x, tip_y, base_x + wing_x, base_y + wing_y, base_x - wing_x, base_y - wing_y, symbolColor);
 }
 
+void drawAircraftSymbol(LovyanGFX& target, int x, int y, float heading_deg, float track_deg, float gs_knots, bool is_mil, bool is_emergency) {
+  constexpr float kDegToRad = 0.01745329252f;
+  const float rad_h = heading_deg * kDegToRad;
+  const float sin_h = sinf(rad_h);
+  const float cos_h = cosf(rad_h);
+
+  const int tip_x = x + (int)roundf(sin_h * (float)kAircraftNoseLenPx);
+  const int tip_y = y - (int)roundf(cos_h * (float)kAircraftNoseLenPx);
+
+  const int base_x = x - (int)roundf(sin_h * (float)kAircraftTailLenPx);
+  const int base_y = y + (int)roundf(cos_h * (float)kAircraftTailLenPx);
+
+  const int wing_x = (int)roundf(cos_h * (float)kAircraftTailHalfPx);
+  const int wing_y = (int)roundf(sin_h * (float)kAircraftTailHalfPx);
+
+  const int len = speedLineLengthPx(gs_knots);
+  if (len > 0) {
+    const float rad_t = track_deg * kDegToRad;
+    const int ex = tip_x + (int)roundf(sinf(rad_t) * (float)len);
+    const int ey = tip_y - (int)roundf(cosf(rad_t) * (float)len);
+    target.drawWideLine(tip_x, tip_y, ex, ey, 1, target.color565(255, 255, 255));
+  }
+
+  uint16_t symbolColor = target.color565(0, 120, 255);
+  if (is_emergency) {
+    symbolColor = (millis() % 600 < 300) ? target.color565(255, 0, 0) : target.color565(255, 255, 0);
+  } else if (is_mil) {
+    symbolColor = target.color565(255, 0, 0);
+  }
+  target.fillTriangle(tip_x, tip_y, base_x + wing_x, base_y + wing_y, base_x - wing_x, base_y - wing_y, symbolColor);
+}
+
 const char* tagTopLine(const AircraftData& ac) {
   if (ac.route[0] != '\0') return ac.route;
   return ac.callsign;
@@ -1666,12 +1956,21 @@ void drawAircraftTag(LovyanGFX& target, int x, int y, const AircraftData& ac) {
   }
   ly = constrain(ly, 2, TFT_H - block_h - 2);
 
-  // Riadok 1: Trasa letísk (fialová) alebo Callsign (biela/červená)
+  // Riadok 1: Trasa letísk (fialová) alebo Callsign (biela/červená/núdza)
   const char* top = tagTopLine(ac);
   if (top[0] != '\0') {
     uint16_t col = ac.is_mil ? target.color565(255, 60, 60) : (ac.route[0] != '\0' ? target.color565(255, 130, 255) : TFT_WHITE);
+    if (ac.is_emergency) {
+      col = (millis() % 600 < 300) ? target.color565(255, 30, 30) : target.color565(255, 255, 0);
+    }
     target.setTextColor(col, TFT_BLACK);
-    target.drawString(top, anchor_x, ly);
+    if (ac.is_emergency) {
+      char emStr[24];
+      snprintf(emStr, sizeof(emStr), "🚨%s %s", ac.squawk, top);
+      target.drawString(emStr, anchor_x, ly);
+    } else {
+      target.drawString(top, anchor_x, ly);
+    }
   }
   ly += line_h;
 
@@ -1767,6 +2066,7 @@ void fetchPlanesData() {
       filter["ac"][0]["alt_baro"] = true;
       filter["ac"][0]["baro_rate"] = true;
       filter["ac"][0]["dbFlags"] = true;
+      filter["ac"][0]["squawk"] = true;
 
       JsonDocument doc;
       DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
@@ -1791,6 +2091,10 @@ void fetchPlanesData() {
 
           int dbFlags = plane["dbFlags"] | 0;
           ac.is_mil = (dbFlags & 1) != 0;
+
+          const char* sq = plane["squawk"] | "";
+          strlcpy(ac.squawk, sq, sizeof(ac.squawk));
+          ac.is_emergency = (strcmp(ac.squawk, "7700") == 0 || strcmp(ac.squawk, "7600") == 0 || strcmp(ac.squawk, "7500") == 0);
 
           const char* fl = plane["flight"] | "";
           strlcpy(ac.callsign, fl, sizeof(ac.callsign));
@@ -1904,9 +2208,22 @@ void drawPlaneRadarGrid(LovyanGFX& target) {
   target.setTextDatum(textdatum_t::bottom_center);
   target.setTextColor(TFT_WHITE, TFT_BLACK);
   target.drawString(getCurrentSystemTimeText(), cx, TFT_H - 4);
+
+  // 6. Jemný plynule rotujúci radarový lúč (Pokojná realistická rotácia 10.0s)
+  float sweepDeg = fmodf((float)(millis() % 10000) * (360.0f / 10000.0f), 360.0f);
+  float sweepRad = sweepDeg * DEG_TO_RAD;
+  int sxMain = cx + (int)(cosf(sweepRad) * 105.0f);
+  int syMain = cy + (int)(sinf(sweepRad) * 105.0f);
+  target.drawLine(cx, cy, sxMain, syMain, target.color565(0, 240, 120));
+
+  // Viacúrovňový chvost lúča (Trail gradient)
+  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 2.0f) * DEG_TO_RAD) * 104.0f), cy + (int)(sinf((sweepDeg - 2.0f) * DEG_TO_RAD) * 104.0f), target.color565(0, 160, 80));
+  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 4.0f) * DEG_TO_RAD) * 104.0f), cy + (int)(sinf((sweepDeg - 4.0f) * DEG_TO_RAD) * 104.0f), target.color565(0, 100, 50));
+  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 6.5f) * DEG_TO_RAD) * 103.0f), cy + (int)(sinf((sweepDeg - 6.5f) * DEG_TO_RAD) * 103.0f), target.color565(0, 55, 25));
+  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 9.5f) * DEG_TO_RAD) * 102.0f), cy + (int)(sinf((sweepDeg - 9.5f) * DEG_TO_RAD) * 102.0f), target.color565(0, 25, 12));
 }
 
-/** Vykreslenie radaru lietadiel s plynulou extrapoláciou pohybu (Double Buffering) */
+/** Vykreslenie radaru lietadiel s plynulou extrapoláciou pohybu a adaptívnymi popismi */
 void drawPlanes() {
   ensureCanvas();
   LovyanGFX& target = canvasReady ? static_cast<LovyanGFX&>(canvas) : static_cast<LovyanGFX&>(tft);
@@ -1921,6 +2238,19 @@ void drawPlanes() {
   float dt_s = (lastPlaneFetchFixMs > 0) ? (float)(millis() - lastPlaneFetchFixMs) / 1000.0f : 0.0f;
   if (dt_s > 30.0f) dt_s = 30.0f;
 
+  struct RenderedPlane {
+    int sx, sy;
+    int mapX, mapY;
+    float dist;
+    bool is_on_screen;
+    bool show_tag;
+    AircraftData ac;
+  };
+
+  RenderedPlane planes[MAX_AIRCRAFT];
+  size_t onScreenCount = 0;
+
+  // 1. Krok: Extrapolácia pozícií a výpočet súradníc pre všetky lietadlá
   for (size_t i = 0; i < aircraftCount; i++) {
     AircraftData ac = aircraftList[i];
 
@@ -1941,14 +2271,89 @@ void drawPlanes() {
 
     float distFromCenter = sqrtf((float)((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)));
 
-    if (distFromCenter <= 106.0f) {
-      drawAircraftSymbol(target, sx, sy, ac.nose_deg, ac.track, ac.gs_knots, ac.is_mil);
-      if (currentRadiusKm <= 50) {
-        drawAircraftTag(target, sx, sy, ac);
+    planes[i].sx = sx;
+    planes[i].sy = sy;
+    planes[i].mapX = mapX;
+    planes[i].mapY = mapY;
+    planes[i].dist = distFromCenter;
+    planes[i].is_on_screen = (distFromCenter <= 106.0f);
+    planes[i].show_tag = false;
+    planes[i].ac = ac;
+
+    if (planes[i].is_on_screen) {
+      onScreenCount++;
+    }
+  }
+
+  // 2. Krok: Určenie, ktoré lietadlá dostanú popis (Smart Tag Visibility)
+  if (currentRadiusKm <= 50.0f) {
+    // Pri 10, 25 a 50 km zobrazujeme štítky všetkým lietadlám na obrazovke
+    for (size_t i = 0; i < aircraftCount; i++) {
+      if (planes[i].is_on_screen) planes[i].show_tag = true;
+    }
+  } else {
+    // Pri 100 km a 250 km:
+    if (onScreenCount <= 3) {
+      // Ak je málo lietadiel, zobrazíme štítky všetkým
+      for (size_t i = 0; i < aircraftCount; i++) {
+        if (planes[i].is_on_screen) planes[i].show_tag = true;
       }
     } else {
-      drawEdgeIndicator(target, mapX, mapY, ac.is_mil);
+      // Ak je lietadiel veľa: vojenské lietadlá majú prioritu vždy
+      for (size_t i = 0; i < aircraftCount; i++) {
+        if (planes[i].is_on_screen && planes[i].ac.is_mil) {
+          planes[i].show_tag = true;
+        }
+      }
+      // Doplníme najviac 3 najbližšie lietadlá k stredu tvojej polohy
+      for (int top = 0; top < 3; top++) {
+        float minDist = 999999.0f;
+        int bestIdx = -1;
+        for (size_t i = 0; i < aircraftCount; i++) {
+          if (planes[i].is_on_screen && !planes[i].show_tag) {
+            if (planes[i].dist < minDist) {
+              minDist = planes[i].dist;
+              bestIdx = (int)i;
+            }
+          }
+        }
+        if (bestIdx >= 0) {
+          planes[bestIdx].show_tag = true;
+        }
+      }
     }
+  }
+
+  // 3. Krok: Samotné vykreslenie symbolov, štítkov a okrajových indikátorov
+  bool hasEmergency = false;
+  String emgInfo;
+
+  for (size_t i = 0; i < aircraftCount; i++) {
+    if (planes[i].is_on_screen) {
+      drawAircraftSymbol(target, planes[i].sx, planes[i].sy, planes[i].ac.nose_deg, planes[i].ac.track, planes[i].ac.gs_knots, planes[i].ac.is_mil, planes[i].ac.is_emergency);
+      if (planes[i].show_tag) {
+        drawAircraftTag(target, planes[i].sx, planes[i].sy, planes[i].ac);
+      }
+      if (planes[i].ac.is_emergency) {
+        hasEmergency = true;
+        emgInfo = String(planes[i].ac.callsign) + " (SQ" + String(planes[i].ac.squawk) + ")";
+      }
+    } else {
+      drawEdgeIndicator(target, planes[i].mapX, planes[i].mapY, planes[i].ac.is_mil);
+      if (planes[i].ac.is_emergency) {
+        hasEmergency = true;
+        emgInfo = String(planes[i].ac.callsign) + " (SQ" + String(planes[i].ac.squawk) + ")";
+      }
+    }
+  }
+
+  // 4. Krok: Zobrazenie núdzového výstražného bannera pri Squawk 7700/7600/7500
+  if (hasEmergency) {
+    target.setTextSize(0.80f);
+    target.setTextDatum(textdatum_t::top_center);
+    uint16_t emgCol = (millis() % 600 < 300) ? target.color565(255, 30, 30) : target.color565(255, 255, 0);
+    target.setTextColor(emgCol, TFT_BLACK);
+    target.drawString("⚠️ NUDZA: " + emgInfo, cx, 22);
   }
 
   if (canvasReady) {
@@ -2084,6 +2489,7 @@ void setup() {
   currentRadiusKm = prefs.getFloat("radius", atof(DEFAULT_RADIUS_KM_TEXT));
   timeOffsetHours = prefs.getInt("offset", DEFAULT_TIME_OFFSET_HOURS);
   carouselIntervalSec = prefs.getInt("car_int", 30);
+  lastPngName = prefs.getString("last_png", "");
   prefs.end();
 
   if (carouselIntervalSec < 5) carouselIntervalSec = 5;
@@ -2104,6 +2510,8 @@ void setup() {
   tft.drawString("Nacitavam data...", TFT_W / 2, TFT_H - 12);
 
   if (downloadLatestRadar()) {
+    renderRadar();
+  } else if (SPIFFS.exists(RADAR_FILE)) {
     renderRadar();
   }
   

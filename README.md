@@ -22,15 +22,18 @@
 
 ## 📖 Obsah
 - [Prehľad projektu](#-prehľad-projektu)
-- [Hlavné funkcie (v1.5.0)](#-hlavné-funkcie)
+- [Hlavné funkcie (v1.6.0)](#-hlavné-funkcie-v160)
 - [Použitý hardvér](#-použitý-hardvér)
 - [Schéma zapojenia](#-schéma-zapojenia)
 - [Ovládanie a funkcie tlačidla](#-ovládanie-a-funkcie-tlačidla)
 - [Lokálny Web Dashboard (Port 80)](#-lokálny-web-dashboard-port-80)
 - [Prvé spustenie a konfigurácia (WiFiManager)](#-prvé-spustenie-a-konfigurácia-wifimanager)
-- [Ako nahrať firmvér](#-ako-nahrať-firmvér)
-  - [Metóda 1: Rýchly flash cez webový prehliadač (bez inštalácie)](#metóda-1-rýchly-flash-cez-webový-prehliadač-odporúčané)
-  - [Metóda 2: Kompilácia cez PlatformIO](#metóda-2-kompilácia-cez-platformio)
+- [Ako nahrať a aktualizovať firmvér](#-ako-nahrať-a-aktualizovať-firmvér)
+  - [Metóda 1: Rýchly flash cez webový prehliadač (USB kábel)](#metóda-1-rýchly-flash-cez-webový-prehliadač-usb-kábel)
+  - [Metóda 2: 1-Kliknutím OTA aktualizácia priamo z GitHubu](#metóda-2-1-kliknutím-ota-aktualizácia-priamo-z-githubu)
+  - [Metóda 3: Manuálny OTA Upload cez Web Dashboard](#metóda-3-manuálny-ota-upload-cez-web-dashboard)
+  - [Metóda 4: Kompilácia a nahratie cez PlatformIO](#metóda-4-kompilácia-a-nahratie-cez-platformio)
+- [3D Tlač krabičky (Enclosure)](#-3d-tlač-krabičky-enclosure)
 - [Časté otázky a riešenie problémov (Troubleshooting)](#-časté-otázky-a-riešenie-problémov)
 - [Pôvodné projekty, inšpirácia a poďakovanie](#-pôvodné-projekty-inšpirácia-a-poďakovanie)
 - [Licencia](#-licencia)
@@ -46,11 +49,7 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 2. **ADS-B Letecký radar:** V reálnom čase monitoruje leteckú prevádzku v okolí vašej polohy cez **ADS-B feed** s plynulou animáciou letu a vyhľadávaním letových trás (**ODKIAĽ > KAM** napr. `VIE>AMS`, `BGY>WAW`).
 
 ---
-[![ESP32-C3 MeteoRadar & ADSB Plane Radar Demo](https://img.youtube.com/vi/1NHL9VXtsXE/0.jpg)](https://www.youtube.com/shorts/1NHL9VXtsXE)
-
----
-
-## 🚀 Hlavné funkcie (v1.5.0)
+[![ESP32-C3 Mete## 🚀 Hlavné funkcie (v1.6.0)
 
 * 🔄 **Automatický Karusel:** Plynulé striedanie režimov počasia a lietadiel v nastaviteľnom intervale (5 až 300 sekúnd).
 * 🔘 **Multi-Click Tlačidlo:**
@@ -58,30 +57,31 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
   * **2x Klik (Dvojklik):** Okamžité manuálne prepnutie medzi počasím a lietadlami.
   * **Dlhé podržanie (3s):** Továrenský reset WiFi a NVS pamäte.
 * ✈️ **Pokročilý Letecký radar (ADS-B) s plynulou extrapoláciou (Dead Reckoning):**
-  * **Dynamický Double Buffering (0 % blikanie):** Inteligentné riadenie životného cyklu 240×240 pixelového off-screen canvasu — vykresľovanie prebieha na pozadí v RAM a na displej sa posiela hotový snímok naraz, čím je eliminované akékoľvek blikanie.
-  * **Dynamická izolácia pamäte:** Počas sťahovania HTTPS dát sa buffer dočasne uvoľní, čím má systém k dispozícii **cez 160 KB voľnej RAM** pre bezpečný a stabilný TLS handshake.
-  * **Plynulý pohyb lietadiel:** Pozície lietadiel sa na obrazovke interpolujú a pohybujú každú sekundu plynulo podľa kurzu a rýchlosti.
+  * **Plynulý 20 FPS Radar Sweep:** Plynule rotujúci zelený radarový lúč s viacstupňovým gradientným chvostom vykresľovaný priamo do 8-bitového canvasu bez blikania displeja.
+  * **🚨 ADS-B Núdzové výstrahy (Squawk 7700 / 7600 / 7500):** Okamžitá vizuálna indikácia núdze – blikanie lietadla a výstražný banner v hornej časti displeja.
+  * **🧠 Adaptívne štítky (Smart Tag Visibility):** Pri rozsahu 10–50 km zobrazuje štítky všetkým lietadlám; pri 100–250 km prioritizuje vojenské lety a 3 najbližšie lietadlá pre čistý a nezaplnený displej.
+  * **Dynamický Double Buffering (0 % blikanie):** 240×240 pixelový off-screen canvas s dynamickou izoláciou pamäte pre bezpečný TLS handshake.
   * **Automatické zisťovanie letových trás:** Prepojenie volacieho znaku s databázou letových plánov (VRS standing-data) zobrazuje trasu letu (`VIE>AMS`).
   * **Kruhová vyrovnávacia pamäť (Route Cache):** Ukladá 48 letových trás do RAM pre okamžité vykreslenie a minimálny dátový prenos.
   * **Čitateľné 3-riadkové štítky:**
-    * *Riadok 1:* Trasa letísk (fialová) alebo Callsign (biela / červená pre vojenské).
+    * *Riadok 1:* Trasa letísk (fialová) alebo Callsign (biela / červená pre vojenské / blikajúca núdza).
     * *Riadok 2:* Typ lietadla ICAO (svetlomodrá, napr. `A21N`) a rýchlosť v km/h (svetlozelená).
     * *Riadok 3:* Nadmorská výška v metroch (žltá) a farebná šípka stúpania / klesania.
   * **Edge Dots:** Obvodové body na okraji displeja indikujúce lietadlá nachádzajúce sa tesne za hranicou aktuálneho priblíženia.
   * **Vojenské lety:** Automatické zvýraznenie vojenských transpondérov červenou farbou.
 * 🌧️ **SHMÚ Meteoradar (Slovensko):**
-  * Sťahovanie najnovšieho zrážkového PNG kompozitu (`cmax.kruh`) zo serverov SHMÚ cez zabezpečené HTTPS.
-  * Zobrazenie času zosnímania radaru s automatickým offsetom časového pásma.
+  * Sťahovanie najnovšieho zrážkového PNG kompozitu (`cmax.kruh`) zo serverov SHMÚ cez zabezpečené HTTPS pomocou nízko-pamäťového streamovaného chunked parsera (< 1 KB RAM).
+  * Trvalé NVS ukladanie posledného timestampu radaru.
   * Zameriavací kríž a diaľkové kružnice.
-* 🌙 **Nočný režim (Auto-Dimming):** Automatické stlmenie jasu displeja počas nočných hodín (22:00 – 06:00) podľa času z NTP.
-* 🌐 **Lokálny Web Dashboard s telemetriou hardvéru a OTA aktualizáciou:**
-  * Vstavaný web server na porte 80 s responzívnym dark-mode dizajnom.
-  * **🚀 1-Kliknutím OTA aktualizácia priamo z GitHubu:** Automatické overenie najnovšieho vydania cez GitHub API a stiahnutie + inštalácia nového firmvéru priamo do ESP32 bez nutnosti kábla alebo počítača.
-  * **📁 Manuálny OTA Upload:** Možnosť nahrať vygenerovaný súbor `.bin` priamo z webového prehliadača.
-  * **Hardvérová telemetria:** Frekvencia CPU (MHz), interná teplota čipu (°C), voľná a celková RAM (KB / %), veľkosť Flash pamäte, minimálna zaznamenaná RAM a celkový čas behu (Uptime).
-  * **Živá tabuľka lietadiel:** Zoznam všetkých zachytených lietadiel v reálnom čase s trasou, rýchlosťou, výškou a koordinátmi.
-  * **Nastavenie GPS polohy:** 1-kliknutím zistenie polohy cez GPS mobilu/PC alebo automatický sieťový IP fallback.
-  * **Zmena Wi-Fi siete:** Skenovanie sietí v okolí s indikátorom sily signálu (RSSI) a pripojenie k novej Wi-Fi.
+* 🌅 **Astronomický Nočný režim (Auto-Dimming):** Matematický prepočet presného času východu a západu slnka podľa zadaných GPS súradníc a dňa v roku – displej sa automaticky stlmí po západe slnka.
+* 🌐 **Lokálny Web Dashboard s interaktívnou mapou (Leaflet) a telemetriou:**
+  * **🗺️ Živá mapa Leaflet.js:** Zobrazenie stredu radaru, akčného okruhu a **živých lietadiel v reálnom čase s kurzom letu**. Kliknutím alebo potiahnutím značky na mape sa okamžite prepočítajú súradnice.
+  * **🔍 Vyhľadávanie obcí a miest (OpenStreetMap Nominatim):** Rýchle fulltextové vyhľadanie akejkoľvek slovenskej obce alebo adresy bez nutnosti manuálneho hľadania GPS súradníc.
+  * **🚀 1-Kliknutím OTA aktualizácia priamo z GitHubu:** Automatické overenie najnovšieho vydania cez GitHub API a inštalácia nového firmvéru bez kábla.
+  * **📁 Manuálny OTA Upload:** Možnosť nahrať vygenerovaný súbor `firmware.bin` priamo z webového prehliadača.
+  * **Hardvérová telemetria:** Frekvencia CPU (MHz), interná teplota čipu (°C), voľná a celková RAM (KB / %), veľkosť Flash pamäte a čas behu (Uptime).
+  * **Živá tabuľka lietadiel:** Zoznam všetkých zachytených lietadiel v reálnom čase s trasou, rýchlosťou, výškou, squawkom a koordinátmi.
+* 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá s dynamickým filtrovaním podľa zoomu.� v okolí s indikátorom sily signálu (RSSI) a pripojenie k novej Wi-Fi.
   * **Asynchrónne AJAX ukladanie:** Okamžité uloženie bez nechceného znovunačítania stránky s okamžitou aktualizáciou radaru.
 * 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá (BA, TT, NR, TN, ZA, BB, PO, KE, BJ, PP, MI, LC) s dynamickým filtrovaním podľa zoomu.
 
@@ -161,21 +161,46 @@ Po pripojení dosky k domácej Wi-Fi sieti je v prehliadači na adrese **`http:/
 
 ---
 
-## 📦 Ako nahrať firmvér
+## 📦 Ako nahrať a aktualizovať firmvér
 
-### Metóda 1: Rýchly flash cez webový prehliadač (Odporúčané)
+> [!IMPORTANT]
+> **Rozdiel medzi binárnymi súbormi (Veľmi dôležité!):**
+> * **`merged-firmware.bin`** (cca 1.6 MB) – Kompletný obraz celej Flash pamäte vrátane bootloadera a tabuľky partícií od offsetu `0x0`. Používa sa **výhradne pre USB kábel** (Web Flasher, esptool).
+> * **`firmware.bin`** (cca 1.5 MB) – Samotná aplikačná partícia od offsetu `0x10000`. Používa sa **výhradne pre bezdrôtový OTA Web Upload** v prehliadači! *NIKDY nenahrávajte `merged-firmware.bin` do webového OTA formulára!*
+
+---
+
+### Metóda 1: Rýchly flash cez webový prehliadač (USB kábel)
 Nemusíte inštalovať žiadne programovacie prostredie, ovládače ani knižnice.
 
 1. Otvorte stránku **[web.esphome.io](https://web.esphome.io/)** v prehliadači Google Chrome, MS Edge alebo Opera.
 2. Pripojte dosku ESP32-C3 cez USB kábel k počítaču.
 3. Kliknite na **CONNECT** a v zozname zvoľte sériový port vášho ESP32 (napr. `COMx` na Windows, `/dev/ttyUSBx` alebo `/dev/ttyACMx` na Mac/Linux).
    > *Tip: Ak prehliadač dosku nevidí, podržte na doske tlačidlo **BOOT**, stlačte tlačidlo **RST** a pustite BOOT.*
-4. Zvoľte **Install** $\rightarrow$ vyberte súbor [`merged-firmware.bin`](merged-firmware.bin) z tohto repozitára.
+4. Zvoľte **Install** $ightarrow$ vyberte súbor [`merged-firmware.bin`](merged-firmware.bin) z tohto repozitára.
 5. Počkajte na dokončenie nahrávania na 100 % a stlačte tlačidlo **RST** na doske.
 
 ---
 
-### Metóda 2: Kompilácia cez PlatformIO
+### Metóda 2: 1-Kliknutím OTA aktualizácia priamo z GitHubu (Bez kábla)
+Ak už máte radar pripojený k domácej Wi-Fi sieti:
+1. Otvorte webové rozhranie na IP adrese vášho radaru (alebo `http://esp-meteoradar.local`).
+2. V sekcii **🚀 Aktualizácia firmvéru (OTA)** kliknite na **🔍 Skontrolovať GitHub**.
+3. ESP32 sa spojí s GitHub API a porovná vašu verziu s najnovším oficiálnym vydaním.
+4. Kliknite na **🚀 Aktualizovať** – doska stiahne nový firmvér, overí integritu, zapíše do Flash a sama sa reštartuje.
+
+---
+
+### Metóda 3: Manuálny OTA Upload cez Web Dashboard
+1. Stiahnite si súbor **`firmware.bin`** z najnovšieho [GitHub Release](../../releases) (alebo z priečinka `.pio/build/nologo_esp32c3_super_mini/firmware.bin` po kompilácii).
+2. Otvorte webový dashboard v prehliadači a prejdite na kartu OTA.
+3. V časti *Manuálny OTA upload* vyberte súbor **`firmware.bin`** a kliknite na **📁 Nahrať firmvér**.
+   > [!WARNING]
+   > Nenahrávajte `merged-firmware.bin`! Pre webový upload slúži výhradne `firmware.bin`.
+
+---
+
+### Metóda 4: Kompilácia a nahratie cez PlatformIO
 
 1. Nainštalujte **[Visual Studio Code](https://code.visualstudio.com/)** a rozšírenie **PlatformIO IDE**.
 2. Naklonujte tento repozitár:
@@ -184,9 +209,15 @@ Nemusíte inštalovať žiadne programovacie prostredie, ovládače ani knižnic
    ```
 3. Otvorte priečinok v prostredí VS Code.
 4. PlatformIO automaticky stiahne potrebné knižnice (`LovyanGFX`, `WiFiManager`, `ArduinoJson`, `PNGdec`).
-5. Pripojte ESP32-C3 a kliknite na tlačidlo **Upload** (šípka $\rightarrow$) v spodnej lište.
+5. Pripojte ESP32-C3 a kliknite na tlačidlo **Upload** (šípka $ightarrow$) v spodnej lište.
 
-Skript `merge_bin.py` po každej kompilácii automaticky vygeneruje aj pripravený spojený súbor `merged-firmware.bin`.
+Skript [`scripts/merge_bin.py`](scripts/merge_bin.py) po každej kompilácii automaticky vygeneruje aj pripravený spojený súbor `merged-firmware.bin` pre USB inštaláciu.
+
+---
+
+## 🖨️ 3D Tlač krabičky (Enclosure)
+
+Pre tento projekt odporúčame použiť pôvodný overený 3D model krabičky z projektu **[ESP32-Plane-Radar (MatixYo)](https://github.com/MatixYo/ESP32-Plane-Radar)** alebo z **[MakerWorld: ESP32 Plane Radar](https://makerworld.com/en/search/models?keyword=ESP32+Plane+Radar)**.
 
 ---
 
