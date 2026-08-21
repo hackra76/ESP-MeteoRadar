@@ -14,14 +14,44 @@
   <b>Kompaktný stolný radar pre okrúhly 1.28″ LCD displej spájajúci zrážkový meteoradar SHMÚ a živé sledovanie lietadiel (ADS-B) s webovým panelom, hardvérovou telemetriou a plynulou animáciou bez blikania.</b>
 </p>
 
+<div align="center">
+  <table>
+    <tr>
+      <td align="center" width="50%">
+        <b>🛰️ Tactical ATC Kombinovaný Radar</b><br>
+        <i>(Zrážky SHMÚ + ADS-B lietadlá + HUD štítky)</i><br><br>
+        <img src="data/demo_combined_radar.gif" width="240" alt="Combined Radar Demo">
+      </td>
+      <td align="center" width="50%">
+        <b>✈️ ADS-B Letecký Radar & Núdza</b><br>
+        <i>(Plynulý pohyb 1 Hz + Squawk 7700 alarm)</i><br><br>
+        <img src="data/demo_plane_radar.gif" width="240" alt="Plane Radar Demo">
+      </td>
+    </tr>
+    <tr>
+      <td align="center" width="50%">
+        <b>🌧️ SHMÚ Meteoradar & Zoom cyklus</b><br>
+        <i>(250 km &rarr; 100 km &rarr; 50 km &rarr; 25 km &rarr; 10 km)</i><br><br>
+        <img src="data/demo_weather_zoom.gif" width="240" alt="Weather Radar Zoom Demo">
+      </td>
+      <td align="center" width="50%">
+        <b>🔄 Automatický Karusel Režimov</b><br>
+        <i>(Plynulé striedanie obrazoviek v reálnom čase)</i><br><br>
+        <img src="data/demo_modes_carousel.gif" width="240" alt="Modes Carousel Demo">
+      </td>
+    </tr>
+  </table>
+</div>
+
 <p align="center">
-  <img src="data/shmu_radar_1.jpg" width="380" alt="ESP-MeteoRadar v prevádzke" style="border-radius: 50%; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+  <img src="data/shmu_radar_1.jpg" width="340" alt="ESP-MeteoRadar v prevádzke" style="border-radius: 50%; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
 </p>
 
 ---
 
 ## 📖 Obsah
 - [Prehľad projektu](#-prehľad-projektu)
+- [Ukážka funkcií a režimov displeja](#-ukážka-funkcií-a-režimov-displeja)
 - [Hlavné funkcie (v1.8.0)](#-hlavné-funkcie-v180)
 - [Použitý hardvér](#-použitý-hardvér)
 - [Schéma zapojenia](#-schéma-zapojenia)
@@ -62,7 +92,6 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
   * **2x Klik (Dvojklik):** Okamžité manuálne prepnutie medzi počasím a lietadlami.
   * **Dlhé podržanie (3s):** Továrenský reset WiFi a NVS pamäte.
 * ✈️ **Pokročilý Letecký radar (ADS-B) s plynulou extrapoláciou (Dead Reckoning):**
-  * **Plynulý 20 FPS Radar Sweep:** Plynule rotujúci zelený radarový lúč s viacstupňovým gradientným chvostom vykresľovaný priamo do 8-bitového canvasu bez blikania displeja.
   * **🚨 ADS-B Núdzové výstrahy (Squawk 7700 / 7600 / 7500):** Okamžitá vizuálna indikácia núdze – blikanie lietadla a výstražný banner v hornej časti displeja.
   * **🧠 Adaptívne štítky (Smart Tag Visibility):** Pri rozsahu 10–50 km zobrazuje štítky všetkým lietadlám; pri 100–250 km prioritizuje vojenské lety a 3 najbližšie lietadlá pre čistý a nezaplnený displej.
   * **Dynamický Double Buffering (0 % blikanie):** 240×240 pixelový off-screen canvas s dynamickou izoláciou pamäte pre bezpečný TLS handshake.
@@ -86,7 +115,9 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
   * **📁 Manuálny OTA Upload:** Možnosť nahrať vygenerovaný súbor `firmware.bin` priamo z webového prehliadača.
   * **Hardvérová telemetria:** Frekvencia CPU (MHz), interná teplota čipu (°C), voľná a celková RAM (KB / %), veľkosť Flash pamäte a čas behu (Uptime).
   * **Živá tabuľka lietadiel:** Zoznam všetkých zachytených lietadiel v reálnom čase s trasou, rýchlosťou, výškou, squawkom a koordinátmi.
-* 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá s dynamickým filtrovaním podľa zoomu.� v okolí s indikátorom sily signálu (RSSI) a pripojenie k novej Wi-Fi.
+  * **Skenovanie Wi-Fi sietí:** Vyhľadanie sietí v okolí s indikátorom sily signálu (RSSI) a pripojenie k novej Wi-Fi.
+  * **Asynchrónne AJAX ukladanie:** Okamžité uloženie bez nechceného znovunačítania stránky s okamžitou aktualizáciou radaru.
+* 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá (BA, TT, NR, TN, ZA, BB, PO, KE, BJ, PP, MI, LC) s dynamickým filtrovaním podľa zoomu.
   * **Asynchrónne AJAX ukladanie:** Okamžité uloženie bez nechceného znovunačítania stránky s okamžitou aktualizáciou radaru.
 * 🗺️ **Vektorová mapa SR a mestá:** Detailný polygón hranice Slovenskej republiky a mestá (BA, TT, NR, TN, ZA, BB, PO, KE, BJ, PP, MI, LC) s dynamickým filtrovaním podľa zoomu.
 
@@ -182,7 +213,7 @@ Nemusíte inštalovať žiadne programovacie prostredie, ovládače ani knižnic
 2. Pripojte dosku ESP32-C3 cez USB kábel k počítaču.
 3. Kliknite na **CONNECT** a v zozname zvoľte sériový port vášho ESP32 (napr. `COMx` na Windows, `/dev/ttyUSBx` alebo `/dev/ttyACMx` na Mac/Linux).
    > *Tip: Ak prehliadač dosku nevidí, podržte na doske tlačidlo **BOOT**, stlačte tlačidlo **RST** a pustite BOOT.*
-4. Zvoľte **Install** $ightarrow$ vyberte súbor [`merged-firmware.bin`](merged-firmware.bin) z tohto repozitára.
+4. Zvoľte **Install** &rarr; vyberte súbor [`merged-firmware.bin`](merged-firmware.bin) z tohto repozitára.
 5. Počkajte na dokončenie nahrávania na 100 % a stlačte tlačidlo **RST** na doske.
 
 ---
@@ -214,7 +245,7 @@ Ak už máte radar pripojený k domácej Wi-Fi sieti:
    ```
 3. Otvorte priečinok v prostredí VS Code.
 4. PlatformIO automaticky stiahne potrebné knižnice (`LovyanGFX`, `WiFiManager`, `ArduinoJson`, `PNGdec`).
-5. Pripojte ESP32-C3 a kliknite na tlačidlo **Upload** (šípka $ightarrow$) v spodnej lište.
+5. Pripojte ESP32-C3 a kliknite na tlačidlo **Upload** (šípka &rarr;) v spodnej lište.
 
 Skript [`scripts/merge_bin.py`](scripts/merge_bin.py) po každej kompilácii automaticky vygeneruje aj pripravený spojený súbor `merged-firmware.bin` pre USB inštaláciu.
 
