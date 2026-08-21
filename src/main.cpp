@@ -3,12 +3,12 @@
  * @file main.cpp
  * @brief ESP32-C3 MeteoRadar + ADS-B Plane Radar (Slovakia)
  * @author hackra76 / Antigravity AI
- * @version 1.7.0
+ * @version 1.7.1
  * 
  * @details 
  * Multifunkčný radar pre okrúhly GC9A01 240x240 displej a ESP32-C3 SuperMini.
  * 
- * Nové a pokročilé funkcie vo v1.7.0:
+ * Nové a pokročilé funkcie vo v1.7.1:
  * 1. 🔘 MULTI-CLICK TLAČIDLO:
  *    - 1x klik: Cyklická zmena zoomu (10, 25, 50, 100, 250 km).
  *    - 2x klik (Dvojklik): Okamžité manuálne prepnutie režimu (Počasie <-> Lietadlá).
@@ -46,7 +46,7 @@
 #include "display_gc9a01.h"
 #include "ui_font.h"
 
-static const char* CURRENT_VERSION = "v1.7.0";
+static const char* CURRENT_VERSION = "v1.7.1";
 
 // =======================================================================================
 // 1. GLOBÁLNE INŠTANCIE & DÁTOVÉ ŠTRUKTÚRY
@@ -754,7 +754,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
     <div class="card">
       <h2>🚀 Aktualizácia firmvéru (OTA)</h2>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.7.0</span></div>
+        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.7.1</span></div>
         <button type="button" onclick="checkOta()" id="btn-check-ota" style="font-size:0.8rem; padding:6px 12px; background:#1f6feb; border-color:#58a6ff;">🔍 Skontrolovať GitHub</button>
       </div>
 
@@ -2293,24 +2293,24 @@ void drawPlaneRadarGrid(LovyanGFX& target) {
   target.drawCircle(cx, cy, 70, gridColor);
   target.drawCircle(cx, cy, 105, gridColor);
 
-  // 4. Svetové strany (N, S, W, E)
+  // 4. Svetové strany (N, S, W, E) - umiestnené na vnútornom obvode hlavného kruhu r=105
   target.setTextSize(0.75f);
   target.setTextDatum(textdatum_t::middle_center);
-  target.setTextColor(TFT_WHITE, TFT_BLACK);
-  target.drawString("N", cx, 8);
-  target.drawString("S", cx, TFT_H - 8);
-  target.drawString("W", 8, cy);
-  target.drawString("E", TFT_W - 8, cy);
+  target.setTextColor(target.color565(180, 220, 180), TFT_BLACK);
+  target.drawString("N", cx, cy - 105 + 10);
+  target.drawString("S", cx, cy + 105 - 10);
+  target.drawString("W", cx - 105 + 10, cy);
+  target.drawString("E", cx + 105 - 10, cy);
 
-  // 5. Mierka a čas
+  // 5. Mierka a čas - umiestnené na hornom a dolnom okraji displeja bez kolízie
   target.setTextSize(0.75f);
   target.setTextDatum(textdatum_t::top_center);
   target.setTextColor(target.color565(0, 255, 0), TFT_BLACK);
-  target.drawString(String((int)currentRadiusKm) + " km", cx, 4);
+  target.drawString(String((int)currentRadiusKm) + " km", cx, 3);
 
   target.setTextDatum(textdatum_t::bottom_center);
   target.setTextColor(TFT_WHITE, TFT_BLACK);
-  target.drawString(getCurrentSystemTimeText(), cx, TFT_H - 4);
+  target.drawString(getCurrentSystemTimeText(), cx, TFT_H - 3);
 }
 
 /** Vykreslenie radaru lietadiel s plynulou extrapoláciou pohybu a adaptívnymi popismi */
@@ -2443,7 +2443,7 @@ void drawPlanes() {
     target.setTextDatum(textdatum_t::top_center);
     uint16_t emgCol = (millis() % 600 < 300) ? target.color565(255, 30, 30) : target.color565(255, 255, 0);
     target.setTextColor(emgCol, TFT_BLACK);
-    target.drawString("⚠️ NUDZA: " + emgInfo, cx, 22);
+    target.drawString("⚠️ NUDZA: " + emgInfo, cx, 38);
   }
 
   if (canvasReady) {
@@ -2489,11 +2489,11 @@ void drawWeatherOverlay(LovyanGFX& target, bool showTime) {
   target.setTextSize(0.75f);
   target.setTextDatum(textdatum_t::top_center);
   target.setTextColor(TFT_WHITE, TFT_BLACK);
-  target.drawString(String((int)currentRadiusKm) + " km", cx, 4);
+  target.drawString(String((int)currentRadiusKm) + " km", cx, 3);
 
   if (showTime) {
     target.setTextDatum(textdatum_t::bottom_center);
-    target.drawString(getRadarTimeText(lastPngName), cx, TFT_H - 4);
+    target.drawString(getRadarTimeText(lastPngName), cx, TFT_H - 3);
   }
 }
 
@@ -2521,11 +2521,29 @@ int32_t pngSeek(PNGFILE* handle, int32_t position) {
   return pngFile.seek(position) ? position : -1;
 }
 
+inline bool isNoDataPixel(uint16_t c) {
+  if (c == 0x0000) return true;
+  // Sivá maska SHMÚ (No Data Mask: indexy 112 a 113 s RGB ~216/230)
+  if (c == 0xE73C || c == 0x3CE7 || c == 0xE71C || c == 0x1CE7 ||
+      c == 0xD6BA || c == 0xBAD6 || c == 0xCE79 || c == 0x79CE ||
+      c == 0xDEFB || c == 0xFBDE || c == 0xEF7D || c == 0x7DEF) {
+    return true;
+  }
+  // Všeobecný filter pre svetlosivé masky (R >= 200, G >= 200, B >= 200)
+  uint16_t r = (c >> 11) & 0x1F;
+  uint16_t g = (c >> 5) & 0x3F;
+  uint16_t b = c & 0x1F;
+  if (r >= 26 && g >= 52 && b >= 26 && abs((int)r - (int)b) <= 2) {
+    return true;
+  }
+  return false;
+}
+
 int drawPngLine(PNGDRAW* pDraw) {
   int srcY = pDraw->y;
   if (srcY < crop.y1 || srcY > crop.y2) return 1;
 
-  png.getLineAsRGB565(pDraw, line565, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+  png.getLineAsRGB565(pDraw, line565, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
   
   float startScreenY = mapYToScreenY((float)srcY);
   float endScreenY = mapYToScreenY((float)srcY + 1.0f);
@@ -2535,9 +2553,12 @@ int drawPngLine(PNGDRAW* pDraw) {
   const float xRatio = (float)crop.w() / (float)TFT_W;
   for (int dx = 0; dx < TFT_W; dx++) {
     int srcX = crop.x1 + (int)(dx * xRatio);
-    if (srcX < 0) srcX = 0;
-    else if (srcX >= RADAR_IMG_W) srcX = RADAR_IMG_W - 1;
-    outLine[dx] = line565[srcX];
+    if (srcX < 0 || srcX >= RADAR_IMG_W) {
+      outLine[dx] = TFT_BLACK;
+    } else {
+      uint16_t c = line565[srcX];
+      outLine[dx] = isNoDataPixel(c) ? TFT_BLACK : c;
+    }
   }
 
   LovyanGFX& target = canvasReady ? static_cast<LovyanGFX&>(canvas) : static_cast<LovyanGFX&>(tft);
