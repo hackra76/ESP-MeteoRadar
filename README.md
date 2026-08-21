@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Platform-ESP32--C3%20SuperMini-blue?style=for-the-badge&logo=espressif" alt="ESP32-C3">
   <img src="https://img.shields.io/badge/Display-GC9A01%20240x240%20SPI-orange?style=for-the-badge" alt="GC9A01">
   <img src="https://img.shields.io/badge/Web%20Dashboard-Port%2080-purple?style=for-the-badge&logo=html5" alt="Web Dashboard">
-  <img src="https://img.shields.io/badge/Release-v1.7.1-success?style=for-the-badge" alt="Release v1.7.1">
+  <img src="https://img.shields.io/badge/Release-v1.8.0-success?style=for-the-badge" alt="Release v1.8.0">
   <img src="https://img.shields.io/badge/Framework-PlatformIO%20%2F%20Arduino-brightgreen?style=for-the-badge&logo=platformio" alt="PlatformIO">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
   <img src="https://img.shields.io/badge/Region-Slovakia%20%28SHM%C3%9A%29-red?style=for-the-badge" alt="Region Slovakia">
@@ -22,7 +22,7 @@
 
 ## 📖 Obsah
 - [Prehľad projektu](#-prehľad-projektu)
-- [Hlavné funkcie (v1.7.1)](#-hlavné-funkcie-v171)
+- [Hlavné funkcie (v1.8.0)](#-hlavné-funkcie-v180)
 - [Použitý hardvér](#-použitý-hardvér)
 - [Schéma zapojenia](#-schéma-zapojenia)
 - [Ovládanie a funkcie tlačidla](#-ovládanie-a-funkcie-tlačidla)
@@ -50,8 +50,12 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 
 ---
 
-## 🚀 Hlavné funkcie (v1.7.1)
+## 🚀 Hlavné funkcie (v1.8.0)
 
+* 🛰️ **Tactical ATC Combined Radar:** Zjednotené zobrazenie zrážkovej oblačnosti (SHMÚ) a ADS-B lietadiel na jednej obrazovke v reálnom čase s plynulou 1 Hz extrapoláciou (`Dead Reckoning`).
+* 🏷️ **HUD Contrast Boxy:** Každý štítok lietadla má tmavý polopriehľadný zaoblený box s orámovaním, vďaka čomu je text 100 % čitateľný aj nad pestrofarebnými búrkovými jadrami.
+* 🎯 **Anti-Collision Tag Filtering & Jemná Grafika:** Inteligentná ochrana pred vzájomným prekrytím textových štítkov, decentné 1-pixelové vektory rýchlosti a ostré symboly lietadiel.
+* 📍 **Zvýraznené Okrajové Indikátory:** Výrazné body na vonkajšom obvode ($r = 114\text{ px}$) pre lietadlá letiace tesne za hranicou aktuálneho priblíženia.
 * 🔄 **Automatický Karusel:** Plynulé striedanie režimov počasia a lietadiel v nastaviteľnom intervale (5 až 300 sekúnd).
 * 🔘 **Multi-Click Tlačidlo:**
   * **1x Klik:** Zmena zoomu (10 $\rightarrow$ 25 $\rightarrow$ 50 $\rightarrow$ 100 $\rightarrow$ 250 km).
