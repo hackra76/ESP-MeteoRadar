@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Platform-ESP32--C3%20SuperMini-blue?style=for-the-badge&logo=espressif" alt="ESP32-C3">
   <img src="https://img.shields.io/badge/Display-GC9A01%20240x240%20SPI-orange?style=for-the-badge" alt="GC9A01">
   <img src="https://img.shields.io/badge/Web%20Dashboard-Port%2080-purple?style=for-the-badge&logo=html5" alt="Web Dashboard">
-  <img src="https://img.shields.io/badge/Release-v1.5.0-success?style=for-the-badge" alt="Release v1.5.0">
+  <img src="https://img.shields.io/badge/Release-v1.7.0-success?style=for-the-badge" alt="Release v1.7.0">
   <img src="https://img.shields.io/badge/Framework-PlatformIO%20%2F%20Arduino-brightgreen?style=for-the-badge&logo=platformio" alt="PlatformIO">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
   <img src="https://img.shields.io/badge/Region-Slovakia%20%28SHM%C3%9A%29-red?style=for-the-badge" alt="Region Slovakia">
@@ -22,7 +22,7 @@
 
 ## 📖 Obsah
 - [Prehľad projektu](#-prehľad-projektu)
-- [Hlavné funkcie (v1.6.0)](#-hlavné-funkcie-v160)
+- [Hlavné funkcie (v1.7.0)](#-hlavné-funkcie-v170)
 - [Použitý hardvér](#-použitý-hardvér)
 - [Schéma zapojenia](#-schéma-zapojenia)
 - [Ovládanie a funkcie tlačidla](#-ovládanie-a-funkcie-tlačidla)
@@ -49,7 +49,8 @@ Zariadenie v nastaviteľnom časovom intervale (Karusel) automaticky strieda:
 2. **ADS-B Letecký radar:** V reálnom čase monitoruje leteckú prevádzku v okolí vašej polohy cez **ADS-B feed** s plynulou animáciou letu a vyhľadávaním letových trás (**ODKIAĽ > KAM** napr. `VIE>AMS`, `BGY>WAW`).
 
 ---
-[![ESP32-C3 Mete## 🚀 Hlavné funkcie (v1.6.0)
+
+## 🚀 Hlavné funkcie (v1.7.0)
 
 * 🔄 **Automatický Karusel:** Plynulé striedanie režimov počasia a lietadiel v nastaviteľnom intervale (5 až 300 sekúnd).
 * 🔘 **Multi-Click Tlačidlo:**

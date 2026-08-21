@@ -3,12 +3,12 @@
  * @file main.cpp
  * @brief ESP32-C3 MeteoRadar + ADS-B Plane Radar (Slovakia)
  * @author hackra76 / Antigravity AI
- * @version 1.4.0
+ * @version 1.7.0
  * 
  * @details 
  * Multifunkčný radar pre okrúhly GC9A01 240x240 displej a ESP32-C3 SuperMini.
  * 
- * Nové a pokročilé funkcie vo v1.4.0:
+ * Nové a pokročilé funkcie vo v1.7.0:
  * 1. 🔘 MULTI-CLICK TLAČIDLO:
  *    - 1x klik: Cyklická zmena zoomu (10, 25, 50, 100, 250 km).
  *    - 2x klik (Dvojklik): Okamžité manuálne prepnutie režimu (Počasie <-> Lietadlá).
@@ -46,8 +46,7 @@
 #include "display_gc9a01.h"
 #include "ui_font.h"
 
-// Verzia firmvéru pre OTA aktualizácie
-static const char* CURRENT_VERSION = "v1.6.1";
+static const char* CURRENT_VERSION = "v1.7.0";
 
 // =======================================================================================
 // 1. GLOBÁLNE INŠTANCIE & DÁTOVÉ ŠTRUKTÚRY
@@ -155,7 +154,7 @@ uint32_t lastPlaneFetchMs = 0;
 uint32_t lastPlaneRedrawMs = 0;
 uint32_t lastPlaneFetchFixMs = 0;
 static constexpr uint32_t PLANE_FETCH_INTERVAL_MS = 10000;
-static constexpr uint32_t PLANE_REDRAW_INTERVAL_MS = 50; // Plynulé 20 FPS vykresľovanie pre dokonale plynulý sweep lúč
+static constexpr uint32_t PLANE_REDRAW_INTERVAL_MS = 1000; // Pokojné 1 Hz prekresľovanie pre hodiny a plynulú extrapoláciu
 
 // Dátový model lietadla pre vykreslenie štítku
 struct AircraftData {
@@ -212,20 +211,14 @@ CropBox makeCrop(float lat, float lon, float radiusKm) {
   float degLat = radiusKm / 111.32f;
   float degLon = radiusKm / (111.32f * cosf(lat * DEG_TO_RAD));
   
-  int x1 = lonToX(lon - degLon);
-  int x2 = lonToX(lon + degLon);
-  int y1 = latToY(lat + degLat);
-  int y2 = latToY(lat - degLat);
+  int cx = lonToX(lon);
+  int cy = latToY(lat);
+  int spanX = (int)roundf(degLon * (float)(RADAR_IMG_W - 1) / (LON_RIGHT - LON_LEFT));
+  int spanY = (int)roundf(degLat * (float)(RADAR_IMG_H - 1) / (LAT_TOP - LAT_BOTTOM));
+  int span = std::max(spanX, spanY);
+  if (span < 10) span = 10;
   
-  x1 = constrain(x1, 0, RADAR_IMG_W - 1); 
-  x2 = constrain(x2, 0, RADAR_IMG_W - 1);
-  y1 = constrain(y1, 0, RADAR_IMG_H - 1); 
-  y2 = constrain(y2, 0, RADAR_IMG_H - 1);
-  
-  if (x2 < x1) std::swap(x1, x2);
-  if (y2 < y1) std::swap(y1, y2);
-  
-  return {x1, y1, x2, y2};
+  return {cx - span, cy - span, cx + span, cy + span};
 }
 
 
@@ -392,10 +385,8 @@ void setAppMode(AppMode newMode) {
   currentMode = newMode;
   lastCarouselSwitchMs = millis();
   if (currentMode == MODE_WEATHER) {
-    ensureCanvas();
     renderRadar();
   } else {
-    ensureCanvas();
     drawPlanes();
     lastPlaneFetchMs = millis();
     fetchPlanesData();
@@ -456,7 +447,7 @@ void handleButton() {
 void connectWiFi() {
   WiFi.mode(WIFI_STA); 
   delay(100);
-  showStatus("ESP MeteoRadar v1.5\nPripajam WiFi...");
+  showStatus("ESP MeteoRadar " + String(CURRENT_VERSION) + "\nPripajam WiFi...");
 
   prefs.begin("radar", true);
   String curLat = String(prefs.getFloat("lat", atof(DEFAULT_CENTER_LAT)), 4);
@@ -515,6 +506,12 @@ void connectWiFi() {
 
   carouselIntervalMs = (uint32_t)carouselIntervalSec * 1000;
   configTime(timeOffsetHours * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  
+  // Krátke čakanie na synchronizáciu reálneho NTP času pre bezchybný TLS handshake
+  uint32_t ntpStart = millis();
+  while (time(nullptr) < 100000 && millis() - ntpStart < 3500) {
+    delay(100);
+  }
 
   String ipStr = WiFi.localIP().toString();
   Serial.println("\n=======================================================");
@@ -526,7 +523,6 @@ void connectWiFi() {
   Serial.println("=======================================================\n");
 
   showStatus("WiFi Pripojene!\n\nIP: " + ipStr + "\nespmeteoradar.local");
-  WiFi.setSleep(false); // Vypne modem-sleep pre maximálnu a okamžitú odozvu web servera
   delay(2500);
 }
 
@@ -758,7 +754,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
     <div class="card">
       <h2>🚀 Aktualizácia firmvéru (OTA)</h2>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.6.0</span></div>
+        <div><b>Aktuálna verzia:</b> <span id="ota-cur-ver" style="color:#58a6ff; font-weight:bold;">v1.7.0</span></div>
         <button type="button" onclick="checkOta()" id="btn-check-ota" style="font-size:0.8rem; padding:6px 12px; background:#1f6feb; border-color:#58a6ff;">🔍 Skontrolovať GitHub</button>
       </div>
 
@@ -1414,7 +1410,7 @@ void handleApiOtaCheck() {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setHandshakeTimeout(8000);
+  client.setHandshakeTimeout(4000);
   HTTPClient http;
   http.setTimeout(10000);
   http.setUserAgent("ESP32-MeteoRadar");
@@ -1595,25 +1591,49 @@ void setupWebServer() {
 // 5. SHMÚ METEORADAR (SŤAHOVANIE & SPRACOVANIE)
 // =======================================================================================
 
+String findLatestPngNameInText(const String& text, String& newestTs) {
+  const String prefix = "cmax.kruh.";
+  String latest;
+  int pos = 0;
+  while (true) {
+    int idx = text.indexOf(prefix, pos);
+    if (idx < 0) break;
+    int end = text.indexOf(".png", idx);
+    if (end < 0) break;
+    String name = text.substring(idx, end + 4);
+    String ts = name.substring(name.indexOf(prefix) + prefix.length(), name.indexOf(prefix) + prefix.length() + 13);
+    if (ts > newestTs) { 
+      newestTs = ts; 
+      latest = name; 
+    }
+    pos = end + 4;
+  }
+  return latest;
+}
+
 bool downloadLatestRadar() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[SHMU] WiFi nie je pripojené, preskakujem sťahovanie radaru.");
+    return false;
+  }
+
   releaseCanvas(); // Uvoľníme 58 KB RAM pre maximálny priestor pre TLS
+
+  Serial.println("[SHMU] Sťahujem zoznam snímok zo SHMÚ API (HTTPS)...");
 
   for (int attempt = 1; attempt <= 2; attempt++) {
     WiFiClientSecure client; 
     client.setInsecure();
-    client.setHandshakeTimeout(8000);
+    client.setHandshakeTimeout(10000);
     HTTPClient http; 
-    http.setTimeout(12000);
+    http.setTimeout(15000);
 
     if (http.begin(client, SHMU_API_URL)) {
-      if (http.GET() == HTTP_CODE_OK) {
-        String window, latest;
-        const String prefix = "cmax.kruh.";
-
+      int httpCode = http.GET();
+      if (httpCode == HTTP_CODE_OK) {
+        String window, latest, newestTs;
         WiFiClient* stream = http.getStreamPtr();
-        uint8_t buf[256];
+        uint8_t buf[512];
         uint32_t startReadMs = millis();
 
         while (http.connected() || stream->available()) {
@@ -1623,21 +1643,13 @@ bool downloadLatestRadar() {
             int n = stream->readBytes(buf, toRead);
             if (n > 0) {
               window += String((const char*)buf, n);
-              int idx = window.indexOf(prefix);
-              if (idx >= 0) {
-                int end = window.indexOf(".png", idx);
-                if (end >= 0) {
-                  latest = window.substring(idx, end + 4);
-                  break; // Nájdená najnovšia snímka v prvých bajtoch!
-                }
-              }
-              if (window.length() > 300) {
-                window = window.substring(window.length() - 200);
-              }
+              String candidate = findLatestPngNameInText(window, newestTs);
+              if (!candidate.isEmpty()) latest = candidate;
+              if (window.length() > 300) window = window.substring(window.length() - 200);
             }
             startReadMs = millis();
           } else {
-            if (millis() - startReadMs > 6000) break;
+            if (millis() - startReadMs > 10000) break;
             delay(2);
           }
           if (stream->available() == 0 && !http.connected()) break;
@@ -1646,20 +1658,31 @@ bool downloadLatestRadar() {
         client.stop();
 
         if (!latest.isEmpty()) {
+          Serial.printf("[SHMU] Najnovšia snímka: %s\n", latest.c_str());
           if (latest == lastPngName && SPIFFS.exists(RADAR_FILE)) {
-            ensureCanvas();
+            Serial.println("[SHMU] Snímka je už stiahnutá v SPIFFS cache.");
             return true;
           }
           String url = String(SHMU_BASE_URL) + latest;
+          Serial.printf("[SHMU] Sťahujem PNG: %s\n", url.c_str());
           WiFiClientSecure clientImg;
           clientImg.setInsecure();
-          clientImg.setHandshakeTimeout(12000);
+          clientImg.setHandshakeTimeout(15000);
           HTTPClient httpImg; 
-          httpImg.setTimeout(20000);
-          if (httpImg.begin(clientImg, url) && httpImg.GET() == HTTP_CODE_OK) {
+          httpImg.setTimeout(25000);
+          int imgCode = httpImg.begin(clientImg, url) ? httpImg.GET() : -1;
+          if (imgCode == HTTP_CODE_OK) {
+            if (SPIFFS.exists(RADAR_FILE)) SPIFFS.remove(RADAR_FILE);
             File f = SPIFFS.open(RADAR_FILE, "w");
+            if (!f) {
+              Serial.println("[SHMU] Zlyhal zápis do SPIFFS, formátujem a skúšam znova...");
+              SPIFFS.format();
+              SPIFFS.begin(true);
+              f = SPIFFS.open(RADAR_FILE, "w");
+            }
             if (f) {
               httpImg.writeToStream(&f);
+              size_t sz = f.size();
               f.close();
               lastPngName = latest;
               prefs.begin("radar", false);
@@ -1667,23 +1690,30 @@ bool downloadLatestRadar() {
               prefs.end();
               httpImg.end();
               clientImg.stop();
-              ensureCanvas();
+              Serial.printf("[SHMU] PNG úspešne uložené do SPIFFS (%u B)!\n", (unsigned int)sz);
               return true;
+            } else {
+              Serial.println("[SHMU] Chyba otvorenia SPIFFS pre zápis!");
             }
+          } else {
+            Serial.printf("[SHMU] Chyba sťahovania PNG, HTTP: %d\n", imgCode);
           }
           httpImg.end();
           clientImg.stop();
+        } else {
+          Serial.println("[SHMU] V odpovedi sa nenašiel žiadny cmax.kruh PNG súbor.");
         }
       } else {
+        Serial.printf("[SHMU] Chyba API GET, HTTP: %d (pokus %d)\n", httpCode, attempt);
         http.end();
         client.stop();
       }
     } else {
+      Serial.printf("[SHMU] Zlyhal http.begin() pre API (pokus %d)\n", attempt);
       client.stop();
     }
     if (attempt < 2) delay(2000);
   }
-  ensureCanvas();
   return false;
 }
 
@@ -1769,10 +1799,9 @@ static void fetchRouteForCallsign(const char* cs, char* out_route, size_t out_le
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setHandshakeTimeout(1500);
+  client.setHandshakeTimeout(3000);
   HTTPClient http;
-  http.setTimeout(1500);
-  http.setUserAgent("ESP32-MeteoRadar");
+  http.setTimeout(3000);
 
   if (http.begin(client, url)) {
     int code = http.GET();
@@ -2031,25 +2060,58 @@ void drawEdgeIndicator(LovyanGFX& target, int mapX, int mapY, bool is_mil) {
   target.drawCircle(edgeX, edgeY, 4, TFT_BLACK);
 }
 
+// Stream wrapper, ktorý trpezlivo čaká na príchod TLS paketov bez výpadku pamäte
+class BufferedStream : public Stream {
+  Stream* _s;
+  uint32_t _timeoutMs;
+public:
+  BufferedStream(Stream* s, uint32_t timeoutMs = 8000) : _s(s), _timeoutMs(timeoutMs) {}
+  int available() override { return _s ? _s->available() : 0; }
+  int read() override {
+    if (!_s) return -1;
+    uint32_t start = millis();
+    while (!_s->available()) {
+      if (millis() - start >= _timeoutMs) return -1;
+      delay(1);
+    }
+    return _s->read();
+  }
+  int peek() override {
+    if (!_s) return -1;
+    uint32_t start = millis();
+    while (!_s->available()) {
+      if (millis() - start >= _timeoutMs) return -1;
+      delay(1);
+    }
+    return _s->peek();
+  }
+  void flush() override { if (_s) _s->flush(); }
+  size_t write(uint8_t c) override { return _s ? _s->write(c) : 0; }
+};
+
 /** Stiahnutie zoznamu lietadiel z ADS-B API */
 void fetchPlanesData() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[ADS-B] WiFi nie je pripojené, preskakujem sťahovanie lietadiel.");
+    return;
+  }
 
-  releaseCanvas(); // Uvoľníme 58 KB RAM pre bezpečný a stabilný TLS handshake!
+  releaseCanvas(); // Uvoľníme 58 KB RAM pre bezpečný a stabilný TLS handshake aj pri 100/250 km!
 
-  float fetchRadiusKm = currentRadiusKm * 1.35f;
-  if (fetchRadiusKm > 320.0f) fetchRadiusKm = 320.0f;
+  // Optimalizovaný rádius dopytu: pri 250 km postačuje 200 km (ušetrí ~40% dát)
+  float fetchRadiusKm = currentRadiusKm;
+  if (fetchRadiusKm >= 250.0f) fetchRadiusKm = 200.0f;
   float radiusNm = fetchRadiusKm / 1.852f;
   String url = "https://opendata.adsb.fi/api/v3/lat/" + String(centerLat, 4) + "/lon/" + String(centerLon, 4) + "/dist/" + String(radiusNm, 1);
 
+  Serial.printf("[ADS-B] Sťahujem lietadlá (HTTPS, stred: %.4f, %.4f, okruh: %.0f km)...\n", centerLat, centerLon, currentRadiusKm);
+
   WiFiClientSecure client;
   client.setInsecure();
-  client.setHandshakeTimeout(4000);
+  client.setHandshakeTimeout(12000);
 
   HTTPClient http;
-  http.useHTTP10(true);
-  http.setTimeout(5000);
-  http.setUserAgent("ESP32-MeteoRadar");
+  http.setTimeout(20000);
 
   if (http.begin(client, url)) {
     int httpCode = http.GET();
@@ -2068,19 +2130,60 @@ void fetchPlanesData() {
       filter["ac"][0]["squawk"] = true;
 
       JsonDocument doc;
-      DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+      BufferedStream bStream(http.getStreamPtr(), 10000);
+      DeserializationError err = deserializeJson(doc, bStream, DeserializationOption::Filter(filter));
       
       http.end();
-      client.stop(); // <--- OKAMŽITÉ UZAVRETIE SPOJENIA
+      client.stop(); // <--- Okamžité uzavretie TLS spojenia
 
-      if (!err) {
+      if (err) {
+        Serial.printf("[ADS-B] Chyba parsovania JSON: %s\n", err.c_str());
+      } else {
         JsonArray acList = doc["ac"].as<JsonArray>();
+
+        struct Cand {
+          float distKm;
+          uint16_t idx;
+          uint8_t prio; // 0 = Emergency, 1 = Military, 2 = Civil
+        };
+
+        Cand cands[64];
+        size_t candCount = 0;
+        float cosCenterLat = cosf(centerLat * DEG_TO_RAD);
+
+        for (size_t i = 0; i < acList.size() && candCount < 64; i++) {
+          JsonObject plane = acList[i];
+          float lat = plane["lat"].as<float>();
+          float lon = plane["lon"].as<float>();
+          if (lat == 0.0f && lon == 0.0f) continue;
+
+          bool isGround = (plane["alt_baro"].is<const char*>() && strcmp(plane["alt_baro"].as<const char*>(), "ground") == 0);
+          if (currentRadiusKm >= 100.0f && isGround) continue;
+
+          int dbFlags = plane["dbFlags"] | 0;
+          bool is_mil = (dbFlags & 1) != 0;
+          const char* sq = plane["squawk"] | "";
+          bool is_emg = (strcmp(sq, "7700") == 0 || strcmp(sq, "7600") == 0 || strcmp(sq, "7500") == 0);
+
+          float dLatKm = (lat - centerLat) * 111.32f;
+          float dLonKm = (lon - centerLon) * (111.32f * cosCenterLat);
+          float distKm = sqrtf(dLatKm * dLatKm + dLonKm * dLonKm);
+
+          uint8_t prio = is_emg ? 0 : (is_mil ? 1 : 2);
+          cands[candCount++] = {distKm, (uint16_t)i, prio};
+        }
+
+        // Zoradenie: Prioritné lety prvé, potom podľa vzdialenosti
+        std::sort(cands, cands + candCount, [](const Cand& a, const Cand& b) {
+          if (a.prio != b.prio) return a.prio < b.prio;
+          return a.distKm < b.distKm;
+        });
+
         size_t count = 0;
+        for (size_t k = 0; k < candCount && count < MAX_AIRCRAFT; k++) {
+          JsonObject plane = acList[cands[k].idx];
+          AircraftData& ac = aircraftList[count++];
 
-        for (JsonObject plane : acList) {
-          if (count >= MAX_AIRCRAFT) break;
-
-          AircraftData ac;
           ac.lat = plane["lat"].as<float>();
           ac.lon = plane["lon"].as<float>();
           ac.track = plane["track"] | 0.0f;
@@ -2097,7 +2200,6 @@ void fetchPlanesData() {
 
           const char* fl = plane["flight"] | "";
           strlcpy(ac.callsign, fl, sizeof(ac.callsign));
-          
           size_t csLen = strlen(ac.callsign);
           while (csLen > 0 && ac.callsign[csLen - 1] == ' ') {
             ac.callsign[--csLen] = '\0';
@@ -2115,7 +2217,6 @@ void fetchPlanesData() {
             snprintf(ac.alt, sizeof(ac.alt), "%dm", altMeters);
           }
 
-          // Rýchle načítanie z pamäte cache
           ac.route[0] = '\0';
           if (strcmp(ac.callsign, "NOCALL") != 0 && !ac.is_mil) {
             const char* cached = routeCacheFind(ac.callsign);
@@ -2123,29 +2224,32 @@ void fetchPlanesData() {
               strlcpy(ac.route, cached, sizeof(ac.route));
             }
           }
-
-          aircraftList[count++] = ac;
         }
 
         aircraftCount = count;
         lastPlaneFetchFixMs = millis();
 
-        // Samostatné sekvenčné dohľadanie trasy maximálne pre 1 lietadlo (veľmi rýchle, aby neblokovalo animáciu)
+        // Samostatné sekvenčné dohľadanie trás maximálne pre 2 lietadlá (po úplnom uzavretí ADS-B spojenia!)
         int routesFetched = 0;
-        for (size_t i = 0; i < aircraftCount && routesFetched < 1; i++) {
+        for (size_t i = 0; i < aircraftCount && routesFetched < 2; i++) {
           if (aircraftList[i].route[0] == '\0' && strcmp(aircraftList[i].callsign, "NOCALL") != 0 && !aircraftList[i].is_mil) {
             fetchRouteForCallsign(aircraftList[i].callsign, aircraftList[i].route, sizeof(aircraftList[i].route));
             routesFetched++;
           }
         }
+
+        Serial.printf("[ADS-B] Načítaných %u lietadiel z API (vybraných: %u najbližších/prioritných, Free RAM: %u B)\n", 
+                      (unsigned int)acList.size(), (unsigned int)count, (unsigned int)ESP.getFreeHeap());
       }
     } else {
+      Serial.printf("[ADS-B] Chyba HTTP: %d\n", httpCode);
       http.end();
       client.stop();
     }
-  } else {
-    client.stop();
   }
+
+  ensureCanvas(); // Okamžite obnovíme canvas
+  drawPlanes();   // A hneď prekreslíme nový stav
 }
 
 /** Vykreslenie radarovej mriežky s mestami a kružnicami */
@@ -2207,34 +2311,6 @@ void drawPlaneRadarGrid(LovyanGFX& target) {
   target.setTextDatum(textdatum_t::bottom_center);
   target.setTextColor(TFT_WHITE, TFT_BLACK);
   target.drawString(getCurrentSystemTimeText(), cx, TFT_H - 4);
-
-  // 6. Jemný plynule rotujúci radarový lúč (Pokojná realistická rotácia 10.0s, plynulý chod bez skokov)
-  static uint32_t lastSweepFrameMs = 0;
-  static float currentSweepDeg = 0.0f;
-
-  uint32_t nowMs = millis();
-  if (lastSweepFrameMs == 0) lastSweepFrameMs = nowMs;
-  uint32_t dtMs = nowMs - lastSweepFrameMs;
-  lastSweepFrameMs = nowMs;
-
-  // Ak došlo k sieťovému zdržaniu (napr. TLS sťahovanie trvalo 800ms), ohraničíme delta čas,
-  // aby lúč plynulo pokračoval zo svojej pozície a NIKDY nepreskočil na iné miesto!
-  if (dtMs > 100) dtMs = 50;
-
-  currentSweepDeg += (float)dtMs * (360.0f / 10000.0f);
-  if (currentSweepDeg >= 360.0f) currentSweepDeg = fmodf(currentSweepDeg, 360.0f);
-
-  float sweepDeg = currentSweepDeg;
-  float sweepRad = sweepDeg * DEG_TO_RAD;
-  int sxMain = cx + (int)(cosf(sweepRad) * 105.0f);
-  int syMain = cy + (int)(sinf(sweepRad) * 105.0f);
-  target.drawLine(cx, cy, sxMain, syMain, target.color565(0, 240, 120));
-
-  // Viacúrovňový chvost lúča (Trail gradient)
-  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 2.0f) * DEG_TO_RAD) * 104.0f), cy + (int)(sinf((sweepDeg - 2.0f) * DEG_TO_RAD) * 104.0f), target.color565(0, 160, 80));
-  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 4.0f) * DEG_TO_RAD) * 104.0f), cy + (int)(sinf((sweepDeg - 4.0f) * DEG_TO_RAD) * 104.0f), target.color565(0, 100, 50));
-  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 6.5f) * DEG_TO_RAD) * 103.0f), cy + (int)(sinf((sweepDeg - 6.5f) * DEG_TO_RAD) * 103.0f), target.color565(0, 55, 25));
-  target.drawLine(cx, cy, cx + (int)(cosf((sweepDeg - 9.5f) * DEG_TO_RAD) * 102.0f), cy + (int)(sinf((sweepDeg - 9.5f) * DEG_TO_RAD) * 102.0f), target.color565(0, 25, 12));
 }
 
 /** Vykreslenie radaru lietadiel s plynulou extrapoláciou pohybu a adaptívnymi popismi */
@@ -2375,11 +2451,9 @@ void drawPlanes() {
   }
 }
 
-void drawWeatherOverlay(bool showTime) {
+void drawWeatherOverlay(LovyanGFX& target, bool showTime) {
   int cx = TFT_W / 2;
   int cy = TFT_H / 2;
-
-  LovyanGFX& target = canvasReady ? static_cast<LovyanGFX&>(canvas) : static_cast<LovyanGFX&>(tft);
 
   // Hranice SR
   for (size_t i = 0; i < SK_BORDER_COUNT - 1; i++) {
@@ -2419,13 +2493,7 @@ void drawWeatherOverlay(bool showTime) {
 
   if (showTime) {
     target.setTextDatum(textdatum_t::bottom_center);
-    target.setTextColor(TFT_WHITE, TFT_BLACK);
     target.drawString(getRadarTimeText(lastPngName), cx, TFT_H - 4);
-  }
-
-  // Odoslanie celého hotového snímku naraz v 1 DMA transakcii (žiadne blikanie)
-  if (canvasReady) {
-    canvas.pushSprite(0, 0);
   }
 }
 
@@ -2472,14 +2540,9 @@ int drawPngLine(PNGDRAW* pDraw) {
     outLine[dx] = line565[srcX];
   }
 
-  if (canvasReady) {
-    for (int sy = syMin; sy <= syMax; sy++) {
-      canvas.pushImage(0, sy, TFT_W, 1, outLine);
-    }
-  } else {
-    for (int sy = syMin; sy <= syMax; sy++) {
-      tft.pushImage(0, sy, TFT_W, 1, outLine);
-    }
+  LovyanGFX& target = canvasReady ? static_cast<LovyanGFX&>(canvas) : static_cast<LovyanGFX&>(tft);
+  for (int sy = syMin; sy <= syMax; sy++) {
+    target.pushImage(0, sy, TFT_W, 1, outLine);
   }
   return 1;
 }
@@ -2487,11 +2550,16 @@ int drawPngLine(PNGDRAW* pDraw) {
 bool renderRadar() {
   if (!SPIFFS.exists(RADAR_FILE)) return false;
   ensureCanvas();
+  LovyanGFX& target = canvasReady ? static_cast<LovyanGFX&>(canvas) : static_cast<LovyanGFX&>(tft);
+  target.fillScreen(TFT_BLACK);
   if (png.open(RADAR_FILE, pngOpen, pngClose, pngRead, pngSeek, drawPngLine) == PNG_SUCCESS) {
     png.decode(nullptr, 0);
     png.close();
   }
-  drawWeatherOverlay(true);
+  drawWeatherOverlay(target, true);
+  if (canvasReady) {
+    canvas.pushSprite(0, 0);
+  }
   return true;
 }
 
@@ -2502,12 +2570,18 @@ bool renderRadar() {
 
 void setup() {
   Serial.begin(115200);
+  delay(600);
+  Serial.println("\n\n========================================");
+  Serial.printf("  ESP-MeteoRadar %s (ESP32-C3)\n", CURRENT_VERSION);
+  Serial.printf("  Free RAM: %u B, Flash: %u MB\n", (unsigned int)ESP.getFreeHeap(), (unsigned int)(ESP.getFlashChipSize() / (1024 * 1024)));
+  Serial.println("========================================\n");
   
   tft.init(); 
   tft.setRotation(0); 
   tft.setBrightness(180); 
   tft.loadFont(ui_font_vlw, lgfx::IFont::font_type_t::ft_vlw);
   tft.setTextSize(0.80f);
+  ensureCanvas();
 
   pinMode(ZOOM_BUTTON_PIN, INPUT_PULLUP);
   
@@ -2524,14 +2598,24 @@ void setup() {
   carouselIntervalMs = (uint32_t)carouselIntervalSec * 1000;
 
   checkResetButtonAtBoot();
-  SPIFFS.begin(true);
+  if (!SPIFFS.begin(false)) {
+    Serial.println("[SPIFFS] SPIFFS nebolo možné pripojiť, formátujem oddiel...");
+    SPIFFS.format();
+    if (SPIFFS.begin(true)) {
+      Serial.println("[SPIFFS] Formátovanie úspešné a SPIFFS pripojené!");
+    } else {
+      Serial.println("[SPIFFS] Chyba pripojenia SPIFFS!");
+    }
+  } else {
+    Serial.println("[SPIFFS] SPIFFS pripojené v poriadku.");
+  }
   connectWiFi();
   setupWebServer();
   
   crop = makeCrop(centerLat, centerLon, currentRadiusKm);
 
   tft.fillScreen(TFT_BLACK);
-  drawWeatherOverlay(false);
+  drawWeatherOverlay(tft, false);
   tft.setTextSize(0.75f);
   tft.setTextDatum(textdatum_t::bottom_center);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -2573,7 +2657,8 @@ void loop() {
 
   // Periodické aktualizácie podľa aktívneho režimu
   if (currentMode == MODE_WEATHER) {
-    if (now - lastWeatherUpdateMs >= UPDATE_INTERVAL_MS) {
+    uint32_t interval = (lastPngName.isEmpty() || !SPIFFS.exists(RADAR_FILE)) ? 15000 : UPDATE_INTERVAL_MS;
+    if (now - lastWeatherUpdateMs >= interval) {
       lastWeatherUpdateMs = now;
       if (downloadLatestRadar()) renderRadar();
     }
@@ -2590,5 +2675,5 @@ void loop() {
     }
   }
   
-  delay(15);
+  delay(10);
 }

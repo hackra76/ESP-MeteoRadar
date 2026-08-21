@@ -22,7 +22,7 @@ python3 -m esptool --chip esp32c3 merge_bin -o esp-meteoradar.bin --flash_mode d
 #define ZOOM_BUTTON_PIN 9
 static constexpr uint32_t RESET_HOLD_MS = 3000;
 
-// Aktualizácia radaru (každých 5 minút)
+// Aktualizácia radaru (zmenené na 5 minút)
 static constexpr uint32_t UPDATE_INTERVAL_MS = 5UL * 60UL * 1000UL; // 5 min
 
 // ===== SHMÚ OpenData =====
